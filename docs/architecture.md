@@ -20,17 +20,18 @@ where needed, new sub-agent responsibilities, without changing the core graph sh
 graph TD
     User[Traveler] --> Supervisor[Supervisor Agent]
 
-    Supervisor --> Enhancer[Enhancer Agent]
-    Supervisor --> Researcher[Researcher Agent]
-    Supervisor --> Planner[Planner Agent]
-    Supervisor --> Booker[Booker Agent]
-    Supervisor --> Validator[Validator / Human-in-the-Loop Agent]
+    Supervisor -->|missing info| Enhancer[Enhancer Agent]
+    Supervisor -->|ready to search| Researcher[Researcher Agent]
+    Supervisor -->|options in hand| Planner[Planner Agent]
 
     Enhancer --> Supervisor
     Researcher --> Supervisor
-    Planner --> Supervisor
+    Planner --> Validator[Validator / Human-in-the-Loop Agent]
+
+    Validator -->|user rejects or edits| Planner
+    Validator -->|user approves| Booker[Booker Agent]
+
     Booker --> Supervisor
-    Validator --> Supervisor
 
     Researcher --> MCPClient[MCP Client Layer]
     Booker --> MCPClient
@@ -45,10 +46,20 @@ graph TD
     StaysMCP --> Duffel
 ```
 
-Every sub-agent reports back to the supervisor rather than to each other directly —
-this keeps control flow centralized and makes the graph easy to reason about and
-debug, at the cost of an extra hop per handoff. That trade-off is acceptable at this
-scale and can be revisited if latency becomes an issue.
+Note what changed from a naive "supervisor fans out to five equal siblings" diagram:
+**there is no edge from the Supervisor or the Planner directly to the Booker.** The
+only path into the Booker node is through the Validator's "approved" edge. This
+matters because a diagram (and the underlying graph) where all agents are parallel
+children of the supervisor doesn't actually guarantee sequencing — the supervisor
+could, in principle, route to Booker without ever visiting Validator. Making
+Validator a structural gate — the sole in-edge to Booker — means "no booking without
+confirmation" is enforced by the graph's shape itself, not by the supervisor's
+judgment each turn.
+
+Enhancer, Researcher, and Planner all report back to the Supervisor, since their
+outputs may need re-routing (e.g. Researcher's results might reveal a need for more
+Enhancer clarification). Once a Planner output is ready, though, it goes straight to
+Validator — that step is not optional and not supervisor-mediated.
 
 ---
 
