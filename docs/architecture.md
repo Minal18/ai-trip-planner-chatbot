@@ -46,20 +46,15 @@ graph TD
     StaysMCP --> Duffel
 ```
 
-Note what changed from a naive "supervisor fans out to five equal siblings" diagram:
-**there is no edge from the Supervisor or the Planner directly to the Booker.** The
-only path into the Booker node is through the Validator's "approved" edge. This
-matters because a diagram (and the underlying graph) where all agents are parallel
-children of the supervisor doesn't actually guarantee sequencing — the supervisor
-could, in principle, route to Booker without ever visiting Validator. Making
-Validator a structural gate — the sole in-edge to Booker — means "no booking without
-confirmation" is enforced by the graph's shape itself, not by the supervisor's
-judgment each turn.
-
 Enhancer, Researcher, and Planner all report back to the Supervisor, since their
 outputs may need re-routing (e.g. Researcher's results might reveal a need for more
-Enhancer clarification). Once a Planner output is ready, though, it goes straight to
-Validator — that step is not optional and not supervisor-mediated.
+Enhancer clarification).
+
+The Booker is different: it has exactly one in-edge, from the Validator's "approved"
+branch. There's no path from the Supervisor or Planner directly to Booker, so no
+booking can happen without passing through Validator first — the graph's shape
+enforces this, not the Supervisor's judgment on a given turn. Validator also has a
+rejection path back to Planner for when the user wants changes.
 
 ---
 
@@ -149,8 +144,11 @@ Design conventions applied consistently across all servers:
   purposes.
 
 ### Phase 2: cross-session, persistent memory
-- Swap the in-memory checkpointer for a persistent one (e.g. Postgres- or
-  Redis-backed) so a returning user's prior trips and preferences carry over.
+- Swap the in-memory checkpointer for a persistent one — SQLite is a reasonable
+  starting point (LangGraph ships a built-in SQLite checkpointer, zero extra
+  infrastructure to run), with Postgres or Redis as the upgrade path if the app
+  needs concurrent multi-instance access later — so a returning user's prior trips
+  and preferences carry over.
 - Adds a long-term memory store (separate from per-thread checkpoint state) for
   durable facts about the user (home airport, seat preference, typical budget) that
   should inform future sessions, not just the current one.
@@ -163,7 +161,7 @@ graph LR
 
     subgraph Phase2[Phase 2 — Later]
         G2[LangGraph state] --> C2[Persistent checkpointer]
-        C2 --> Store[Cross-session store<br/>e.g. Postgres / Redis]
+        C2 --> Store[Cross-session store<br/>SQLite → Postgres / Redis]
         Store --> LTM[Long-term user memory<br/>preferences, past trips]
     end
 ```
