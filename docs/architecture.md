@@ -24,13 +24,16 @@ graph TD
     Supervisor -->|ready to search| Researcher[Researcher Agent]
     Supervisor -->|options in hand| Planner[Planner Agent]
 
+    Researcher --> Planner
+
     Enhancer --> Supervisor
     Researcher --> Supervisor
-    Planner --> Validator[Validator / Human-in-the-Loop Agent]
 
-    Validator -->|user rejects or edits| Planner
-    Validator -->|user approves| Booker[Booker Agent]
+    Planner --> HITL{{Human-in-the-Loop Review}}
+    HITL <--> User
+    HITL -->|reject| End([End])
 
+    Supervisor -->|approved| Booker[Booker Agent]
     Booker --> Supervisor
 
     Researcher --> MCPClient[MCP Client Layer]
@@ -50,11 +53,14 @@ Enhancer, Researcher, and Planner all report back to the Supervisor, since their
 outputs may need re-routing (e.g. Researcher's results might reveal a need for more
 Enhancer clarification).
 
-The Booker is different: it has exactly one in-edge, from the Validator's "approved"
-branch. There's no path from the Supervisor or Planner directly to Booker, so no
-booking can happen without passing through Validator first — the graph's shape
-enforces this, not the Supervisor's judgment on a given turn. Validator also has a
-rejection path back to Planner for when the user wants changes.
+The Human-in-the-Loop Review is drawn as a hexagon, not a box, because it isn't an
+agent — it's a LangGraph `interrupt` that pauses the graph and hands control back to
+the traveler directly. The traveler has three options: **approve** (control returns
+to the Supervisor, which is the only thing that can then route to Booker), **request
+edits** (control returns to Planner with the traveler's feedback), or **reject**
+(the graph ends — no further action is taken). Booker still has exactly one path
+in — via the Supervisor, and only on the approve branch — so no booking can happen
+without the traveler having explicitly seen and approved the final itinerary.
 
 ---
 
@@ -91,18 +97,22 @@ rejection path back to Planner for when the user wants changes.
 - Produces the concrete itinerary that the user will be asked to confirm.
 
 ### 3.5 Booker Agent
-- Only acts on an itinerary that has passed validation (§3.6).
+- Only invoked by the Supervisor, and only after the traveler has approved the
+  itinerary via Human-in-the-Loop Review (§3.6).
 - Calls `book_*` tools via the MCP client to create real (or simulated, in test mode)
   orders.
 - Reports back confirmation details (booking reference, price, status) or a
   structured failure (offer expired, sold out) for the supervisor/user to react to.
 
-### 3.6 Validator / Human-in-the-Loop Agent
-- Sits directly before the Booker in the graph.
-- Presents the finalized itinerary and re-fetched, current pricing to the user.
-- **Requires explicit user confirmation before any booking tool is called** — this is
-  a LangGraph `interrupt`, not a soft check. No path from Planner to Booker skips this
-  node.
+### 3.6 Human-in-the-Loop Review
+- Not an agent — a LangGraph `interrupt` that pauses the graph and hands control
+  directly to the traveler, immediately after the Planner produces an itinerary.
+- Presents the finalized itinerary and re-fetched, current pricing.
+- Three possible outcomes: **approve** (returns control to the Supervisor, which then
+  invokes Booker), **request edits** (returns to Planner with feedback), or **reject**
+  (ends the graph).
+- No path from Supervisor or Planner reaches Booker directly — approval through this
+  step is the only way in.
 - Also used for post-booking actions with financial/irreversible consequences
   (cancellations, changes).
 
@@ -125,7 +135,8 @@ control over error handling, credential security, and long-term maintenance.
 
 Design conventions applied consistently across all servers:
 - `search_*` and `book_*` are always separate tools, never combined — this is what
-  lets the Validator/HITL node sit between research and booking in the graph.
+  lets the Human-in-the-Loop review step sit between research and booking in the
+  graph.
 - Raw provider responses are trimmed/normalized before being returned to the agent —
   full API payloads are large and not LLM-context-friendly.
 - Every tool handler catches provider-level errors (expired offer, sold out, invalid
@@ -182,7 +193,7 @@ graph LR
     Researcher -->|trace| LangSmith
     Planner -->|trace| LangSmith
     Booker -->|trace| LangSmith
-    Validator -->|trace| LangSmith
+    HITL[Human-in-the-Loop Review] -->|trace| LangSmith
     MCPClient[MCP Client] -->|tool call trace| LangSmith
 ```
 
@@ -193,18 +204,119 @@ reasoning for a portfolio walkthrough.
 
 ---
 
-## 7. MVP definition of done
+## 7. Per-agent LangGraph subgraphs
 
-- Supervisor correctly routes between Enhancer → Researcher → Planner → Validator →
-  Booker for a flight-and-hotel trip request.
+Each agent (except the Supervisor) is its own compiled LangGraph subgraph — with its
+own nodes, conditional edges, and interrupts — invoked as a node from the top-level
+graph.
+
+### 7.1 Supervisor
+
+The Supervisor doesn't need a multi-node subgraph of its own — it's a single LLM
+call that reads shared state and emits a routing decision, which the top-level
+graph's conditional edge acts on.
+
+```mermaid
+graph TD
+    Start([START]) --> Assess[assess_state<br/>LLM reads shared state]
+    Assess --> Decide{next_agent?}
+    Decide -->|missing info| ToEnhancer([→ Enhancer subgraph])
+    Decide -->|ready to search| ToResearcher([→ Researcher subgraph])
+    Decide -->|options in hand| ToPlanner([→ Planner subgraph])
+    Decide -->|approved| ToBooker([→ Booker subgraph])
+```
+
+### 7.2 Enhancer subgraph
+
+```mermaid
+graph TD
+    Start([START]) --> Check[identify_missing_fields]
+    Check --> Complete{all required<br/>fields present?}
+    Complete -->|yes| End1([END → Supervisor])
+    Complete -->|no| Ask[generate_question<br/>1-2 targeted questions]
+    Ask --> Wait[[interrupt: wait for traveler]]
+    Wait --> Update[update_state]
+    Update --> Check
+```
+
+### 7.3 Researcher subgraph
+
+```mermaid
+graph TD
+    Start([START]) --> Domains[determine_domains<br/>flights, stays, ...]
+    Domains --> Search[call_search_tools<br/>via MCP client]
+    Search --> Empty{any domain<br/>returned nothing?}
+    Empty -->|yes| Flag[flag_insufficient]
+    Empty -->|no| Rank[rank_and_normalize]
+    Flag --> End2([END → Supervisor])
+    Rank --> End2
+```
+
+### 7.4 Planner subgraph
+
+```mermaid
+graph TD
+    Start([START]) --> Feedback{re-entering with<br/>traveler edit feedback?}
+    Feedback -->|yes| Incorporate[incorporate_feedback]
+    Feedback -->|no| Consistency[check_consistency<br/>dates, locations across domains]
+    Incorporate --> Consistency
+    Consistency --> OK{consistent?}
+    OK -->|no| MoreResearch[request_more_research]
+    OK -->|yes| Generate[generate_itineraries<br/>1-3 candidates]
+    MoreResearch --> End3([END → Supervisor,<br/>re-invoke Researcher])
+    Generate --> Price[attach_pricing]
+    Price --> Recommend[recommend<br/>pick + explain trade-offs]
+    Recommend --> End4([END → Human-in-the-loop review])
+```
+
+### 7.5 Human-in-the-loop review
+
+Not an agent subgraph, but worth showing at the same level of detail since it's a
+distinct node in the top-level graph.
+
+```mermaid
+graph TD
+    Start([START]) --> Present[present_itinerary<br/>+ re-fetched current pricing]
+    Present --> Interrupt[[interrupt: wait for traveler]]
+    Interrupt --> Route{decision}
+    Route -->|approve| End5([END → Supervisor])
+    Route -->|request edits| End6([END → Planner,<br/>with feedback])
+    Route -->|reject| End7([END → graph ends])
+```
+
+### 7.6 Booker subgraph
+
+```mermaid
+graph TD
+    Start([START]) --> Reprice[reprice_offers<br/>get_offer / get_stay_rate]
+    Reprice --> Changed{price or availability<br/>changed materially?}
+    Changed -->|yes| Reconfirm[flag_for_reconfirmation]
+    Changed -->|no| Book[call_booking_tools<br/>book_flight, book_stay]
+    Reconfirm --> End8([END → Human-in-the-loop,<br/>re-confirm])
+    Book --> Success{all components<br/>booked?}
+    Success -->|no| Compensate[compensate_partial<br/>cancel what succeeded]
+    Success -->|yes| Confirm[compile_confirmation]
+    Compensate --> Report[compile_failure_report]
+    Confirm --> End9([END → Supervisor])
+    Report --> End9
+```
+
+The reprice-before-booking step and the partial-failure compensation path (§7.6)
+are both explicit nodes here, not afterthoughts — worth keeping even for MVP given
+two independent booking calls are a realistic failure mode.
+
+## 8. MVP definition of done
+
+- Supervisor correctly routes between Enhancer → Researcher → Planner → Human-in-the-
+  Loop Review → Booker for a flight-and-hotel trip request.
 - Flights and Stays MCP servers, each wrapping Duffel's test-mode API, working
   end-to-end for search and (simulated) booking.
-- No booking tool is ever called without passing through the Validator/HITL
-  interrupt.
+- No booking tool is ever called without the traveler explicitly approving via the
+  Human-in-the-Loop interrupt.
 - Conversation state persists for the duration of a session (Phase 1 memory).
 - LangSmith tracing enabled for at least the Researcher and Booker agents' tool calls.
 
-## 8. Roadmap beyond MVP
+## 9. Roadmap beyond MVP
 
 1. Add Activities MCP server (search-only).
 2. Add Restaurants MCP server (search-only, booking likely out of reach without
