@@ -27,6 +27,11 @@ def parse_response(response) -> dict:
     """Pure/deterministic: turn the Enhancer LLM's forced tool call into a state update."""
     if not response.tool_calls:
         raise ValueError("Enhancer response contained no tool call — model did not follow instructions.")
+    if len(response.tool_calls) != 1:
+        raise ValueError(
+            f"Expected exactly one tool call from Enhancer, got {len(response.tool_calls)}: "
+            f"{[c['name'] for c in response.tool_calls]}"
+        )
 
     call = response.tool_calls[0]
     if call["name"] == "RequestReady":

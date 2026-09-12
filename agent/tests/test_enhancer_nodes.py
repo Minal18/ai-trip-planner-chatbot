@@ -42,3 +42,15 @@ def test_parse_response_raises_on_unexpected_tool_name():
     response = _ai_message_with_tool_call("SomeOtherTool", {})
     with pytest.raises(ValueError):
         parse_response(response)
+
+
+def test_parse_response_raises_on_multiple_tool_calls():
+    response = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "AskQuestion", "args": {"question": "..."}, "id": "call_1", "type": "tool_call"},
+            {"name": "RequestReady", "args": {"summary": "...", "request": {}}, "id": "call_2", "type": "tool_call"},
+        ],
+    )
+    with pytest.raises(ValueError):
+        parse_response(response)
