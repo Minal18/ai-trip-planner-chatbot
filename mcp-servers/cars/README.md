@@ -21,6 +21,12 @@ Endpoints were confirmed empirically (`403` = recognized route, `404` = wrong pa
 
 Request/response field names for `search_cars` and `book_car` are based on the example payloads in [Duffel's Cars getting-started guide](https://duffel.com/docs/guides/getting-started-with-cars) — the exact shape of a search response's rate list wasn't fully documented there, so `_trim_rate` in `server.py` may need small field-name fixes once we can actually see a live response.
 
+## Mock mode (for development while access is blocked)
+
+Set `DUFFEL_MOCK_MODE=true` in `.env` to make `search_cars` return realistic fake data (3 vehicles at different price points) instead of calling Duffel. The mock is injected at the raw-response layer, inside `_request()` — so the real `_trim_rate` parsing code still runs on it, only the network call is skipped. Only `search_cars` is mocked; `book_car`/etc. still hit the real (currently gated) API, since Researcher doesn't call those yet.
+
+This validates the *pipeline* (Researcher's ranking/aggregation across domains) — it does **not** validate that our guessed request/response schema actually matches Duffel's real one, since that's still unconfirmed. Once real access arrives, remove `DUFFEL_MOCK_MODE` and re-verify live, the same way Flights was.
+
 ## Setup
 
 Requires **Python 3.10+**.

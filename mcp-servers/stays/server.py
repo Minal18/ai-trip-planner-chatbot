@@ -15,10 +15,44 @@ HEADERS = {
     "Accept-Encoding": "gzip",
 }
 
+# Stays access is currently gated on Duffel's side (403, account not yet approved).
+# This lets development/testing proceed against realistic fake data in the meantime —
+# scoped to search only, since that's the only tool Researcher currently calls.
+# Swap back to real calls by removing/unsetting the env var, no code change needed.
+MOCK_MODE = os.environ.get("DUFFEL_MOCK_MODE", "false").lower() == "true"
+
 mcp = MCPServer("stays")
 
 
+def _mock_stays_search_response(payload: dict) -> dict:
+    check_in = payload["data"]["check_in_date"]
+    check_out = payload["data"]["check_out_date"]
+    listings = [
+        ("Seaside Budget Inn", 3.6, "142 Shoreline Ave", "129.00"),
+        ("Downtown Comfort Hotel", 4.1, "88 Market St", "189.50"),
+        ("Harborview Suites", 4.6, "5 Harbor Blvd", "265.00"),
+    ]
+    return {
+        "data": {
+            "results": [
+                {
+                    "id": f"srez_mock_{i}",
+                    "accommodation": {"name": name, "rating": rating, "location": {"address": address}},
+                    "cheapest_rate_total_amount": amount,
+                    "cheapest_rate_currency": "USD",
+                    "check_in_date": check_in,
+                    "check_out_date": check_out,
+                }
+                for i, (name, rating, address, amount) in enumerate(listings)
+            ]
+        }
+    }
+
+
 async def _request(method: str, path: str, **kwargs) -> dict:
+    if MOCK_MODE and method == "POST" and path == "/stays/search":
+        return _mock_stays_search_response(kwargs.get("json", {}))
+
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.request(method, f"{DUFFEL_API}{path}", headers=HEADERS, **kwargs)
     if response.status_code >= 400:

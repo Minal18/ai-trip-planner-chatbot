@@ -12,6 +12,12 @@ Duffel Stays is a separate product line from Flights and is **not enabled by def
 
 To unblock: contact Duffel via the link above and request Stays test-mode access for this account. Once granted, re-run the flow below to verify end-to-end (the way `mcp-servers/flights/server.py` was verified) — some field names in `server.py` were assembled from Duffel's docs rather than confirmed live, so expect the same kind of small fixes (missing required fields, payment shape) that came up while verifying the Flights server.
 
+## Mock mode (for development while access is blocked)
+
+Set `DUFFEL_MOCK_MODE=true` in `.env` to make `search_stays` return realistic fake data (3 accommodations at different price points) instead of calling Duffel. The mock is injected at the raw-response layer, inside `_request()` — so the real `_trim_search_result` parsing code still runs on it, only the network call is skipped. Only `search_stays` is mocked; `get_stay_rate`/`book_stay`/etc. still hit the real (currently gated) API, since Researcher doesn't call those yet.
+
+This validates the *pipeline* (Researcher's ranking/aggregation across domains) — it does **not** validate that our guessed request/response schema actually matches Duffel's real one, since that's still unconfirmed. Once real access arrives, remove `DUFFEL_MOCK_MODE` and re-verify live, the same way Flights was.
+
 ## Setup
 
 Requires **Python 3.10+**.

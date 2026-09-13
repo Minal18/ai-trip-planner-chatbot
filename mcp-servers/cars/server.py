@@ -15,10 +15,45 @@ HEADERS = {
     "Accept-Encoding": "gzip",
 }
 
+# Cars access is currently gated on Duffel's side (403, account not yet approved).
+# This lets development/testing proceed against realistic fake data in the meantime —
+# scoped to search only, since that's the only tool Researcher currently calls.
+# Swap back to real calls by removing/unsetting the env var, no code change needed.
+MOCK_MODE = os.environ.get("DUFFEL_MOCK_MODE", "false").lower() == "true"
+
 mcp = MCPServer("cars")
 
 
+def _mock_cars_search_response(payload: dict) -> dict:
+    pickup_address = f"Near {payload['data']['pickup_location']['geographic_coordinates']}"
+    dropoff_address = f"Near {payload['data']['dropoff_location']['geographic_coordinates']}"
+    vehicles = [
+        ("Economy", "Rentacar Co.", "38.00"),
+        ("Compact SUV", "DriveNow", "62.50"),
+        ("Full-size", "Rentacar Co.", "79.00"),
+    ]
+    return {
+        "data": {
+            "rates": [
+                {
+                    "id": f"rat_mock_{i}",
+                    "vehicle": {"name": name},
+                    "vendor": {"name": vendor},
+                    "total_amount": amount,
+                    "total_currency": "USD",
+                    "pickup_location": {"address": pickup_address},
+                    "dropoff_location": {"address": dropoff_address},
+                }
+                for i, (name, vendor, amount) in enumerate(vehicles)
+            ]
+        }
+    }
+
+
 async def _request(method: str, path: str, **kwargs) -> dict:
+    if MOCK_MODE and method == "POST" and path == "/cars/search":
+        return _mock_cars_search_response(kwargs.get("json", {}))
+
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.request(method, f"{DUFFEL_API}{path}", headers=HEADERS, **kwargs)
     if response.status_code >= 400:
