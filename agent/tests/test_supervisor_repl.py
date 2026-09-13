@@ -4,7 +4,7 @@ then Researcher, then the stub Planner — and have an actual conversation with 
 Costs API credit per turn (Enhancer's clarification loop + Researcher's search).
 Run manually:
 
-    python3 tests/test_supervisor_repl.py
+    PYTHONPATH=. python3 tests/test_supervisor_repl.py
 """
 
 import asyncio

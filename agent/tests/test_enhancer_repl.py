@@ -2,7 +2,7 @@
 Level 1, interactive: run the real Enhancer graph and have an actual back-and-forth
 with it in the terminal. Costs a small amount of API credit per turn — run manually:
 
-    python3 tests/test_enhancer_repl.py
+    PYTHONPATH=. python3 tests/test_enhancer_repl.py
 """
 
 import asyncio

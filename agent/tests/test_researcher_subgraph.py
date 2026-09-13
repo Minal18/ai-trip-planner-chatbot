@@ -3,7 +3,7 @@ Level 1: compiles the real Researcher subgraph and invokes it against real LLM +
 MCP tool calls. This costs API credits and hits live (test-mode) Duffel endpoints —
 run manually, not as part of an automated suite:
 
-    python3 tests/test_researcher_subgraph.py
+    PYTHONPATH=. python3 tests/test_researcher_subgraph.py
 """
 
 import asyncio
