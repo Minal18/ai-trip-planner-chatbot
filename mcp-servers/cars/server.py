@@ -29,8 +29,17 @@ def _mock_cars_search_response(payload: dict) -> dict:
     dropoff_address = f"Near {payload['data']['dropoff_location']['geographic_coordinates']}"
     vehicles = [
         ("Economy", "Rentacar Co.", "38.00"),
+        ("Subcompact", "ValueWheels", "32.50"),
+        ("Compact", "DriveNow", "44.00"),
         ("Compact SUV", "DriveNow", "62.50"),
+        ("Midsize", "Rentacar Co.", "55.00"),
+        ("Midsize SUV", "SunTrail Rentals", "71.00"),
         ("Full-size", "Rentacar Co.", "79.00"),
+        ("Full-size SUV", "SunTrail Rentals", "98.00"),
+        ("Minivan", "DriveNow", "89.00"),
+        ("Premium Sedan", "Elite Auto Rentals", "115.00"),
+        ("Convertible", "Elite Auto Rentals", "132.00"),
+        ("Luxury SUV", "Elite Auto Rentals", "168.00"),
     ]
     return {
         "data": {
