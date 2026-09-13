@@ -29,8 +29,17 @@ def _mock_stays_search_response(payload: dict) -> dict:
     check_out = payload["data"]["check_out_date"]
     listings = [
         ("Seaside Budget Inn", 3.6, "142 Shoreline Ave", "129.00"),
+        ("Traveler's Rest Motel", 3.4, "27 Airport Rd", "99.00"),
         ("Downtown Comfort Hotel", 4.1, "88 Market St", "189.50"),
+        ("Palm Court Inn", 3.9, "310 Palm Ave", "159.00"),
         ("Harborview Suites", 4.6, "5 Harbor Blvd", "265.00"),
+        ("The Grand Bayfront", 4.7, "1 Bayfront Plaza", "312.00"),
+        ("Sunset Boutique Hotel", 4.3, "64 Sunset Blvd", "228.00"),
+        ("Midtown Executive Suites", 4.0, "500 5th St", "199.00"),
+        ("Riverside Garden Hotel", 4.4, "12 Riverside Walk", "241.50"),
+        ("Central Plaza Hotel", 3.8, "77 Central Sq", "175.00"),
+        ("The Regency", 4.8, "2 Regency Row", "349.00"),
+        ("Budget Stay Express", 3.2, "900 Highway 1", "84.00"),
     ]
     return {
         "data": {
