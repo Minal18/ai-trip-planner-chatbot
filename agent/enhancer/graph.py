@@ -20,7 +20,13 @@ class EnhancerState(TypedDict):
     summary: Optional[str]
 
 
-def build_enhancer_graph():
+def build_enhancer_graph(use_own_checkpointer: bool = True):
+    """use_own_checkpointer=True: standalone use (tests, REPL) — this graph manages
+    its own pause/resume. Set False when nesting this graph as a node inside a
+    parent graph (e.g. Supervisor) — the parent's checkpointer is what should
+    persist the pause, so interrupt() here correctly propagates up to pause the
+    parent's own invoke() call instead of creating a separate, disconnected pause.
+    """
     model = ChatAnthropic(model="claude-sonnet-5").bind_tools(
         [AskQuestion, RequestReady], tool_choice="any"
     )
@@ -50,4 +56,4 @@ def build_enhancer_graph():
     graph.add_conditional_edges("ask_or_complete", route, {END: END, "wait_for_traveler": "wait_for_traveler"})
     graph.add_edge("wait_for_traveler", "ask_or_complete")
 
-    return graph.compile(checkpointer=MemorySaver())
+    return graph.compile(checkpointer=MemorySaver() if use_own_checkpointer else None)
