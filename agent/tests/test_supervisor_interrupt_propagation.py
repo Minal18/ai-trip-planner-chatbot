@@ -65,14 +65,11 @@ async def main():
         result = await graph.ainvoke(Command(resume="that's correct, proceed"), config=config)
 
     request = result["request"]
-    # Check every field search_flights actually needs, from every turn it came
-    # from — not just one. destination came from the very first message;
-    # origin came from turn 1; date/adults came from turn 2. If Enhancer dropped
-    # any single turn's answer, this catches it instead of passing on a fluke.
-    assert request.get("destination") == "AUS", (
-        f"Expected destination AUS (from the opening message) to survive, got: "
-        f"{request.get('destination')!r}."
-    )
+
+    # The load-bearing checks: origin, date, and adults all came from RESUMED
+    # turns (delivered via Command(resume=...) into a paused interrupt()). Each
+    # one only ends up correct if the resume mechanism actually worked — so each
+    # is real evidence for this test's specific claim.
     assert request.get("origin") == "SEA", (
         f"Expected origin SEA (from turn 1's 'Seattle' answer) to survive, got: "
         f"{request.get('origin')!r}. Enhancer likely lost earlier conversation "
@@ -83,6 +80,15 @@ async def main():
     )
     assert request.get("adults") == 1, (
         f"Expected adults=1 (from turn 2's answer) to survive, got: {request.get('adults')!r}."
+    )
+
+    # destination came from the very first, uninterrupted message — it never had
+    # to survive a pause/resume round-trip, so it would likely pass even if the
+    # resume mechanism above were broken. Not evidence for this test's specific
+    # claim; kept only as a cheap extra sanity check that the request is sane.
+    assert request.get("destination") == "AUS", (
+        f"Expected destination AUS (from the opening message) to survive, got: "
+        f"{request.get('destination')!r}."
     )
 
     print("\nPASSED: interrupt propagated to top level, resume continued Enhancer's "
