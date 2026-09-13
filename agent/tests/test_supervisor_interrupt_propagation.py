@@ -64,10 +64,25 @@ async def main():
     while "__interrupt__" in result:
         result = await graph.ainvoke(Command(resume="that's correct, proceed"), config=config)
 
-    assert result["request"]["origin"] == "SEA", (
-        f"Expected origin SEA (from turn 1's 'Seattle' answer) to survive into the "
-        f"final request, got: {result['request'].get('origin')!r}. Enhancer likely "
-        f"lost earlier conversation state across a resume."
+    request = result["request"]
+    # Check every field search_flights actually needs, from every turn it came
+    # from — not just one. destination came from the very first message;
+    # origin came from turn 1; date/adults came from turn 2. If Enhancer dropped
+    # any single turn's answer, this catches it instead of passing on a fluke.
+    assert request.get("destination") == "AUS", (
+        f"Expected destination AUS (from the opening message) to survive, got: "
+        f"{request.get('destination')!r}."
+    )
+    assert request.get("origin") == "SEA", (
+        f"Expected origin SEA (from turn 1's 'Seattle' answer) to survive, got: "
+        f"{request.get('origin')!r}. Enhancer likely lost earlier conversation "
+        f"state across a resume."
+    )
+    assert request.get("departure_date_earliest") is not None, (
+        "Expected a departure date (from turn 2's answer) to survive, got None."
+    )
+    assert request.get("adults") == 1, (
+        f"Expected adults=1 (from turn 2's answer) to survive, got: {request.get('adults')!r}."
     )
 
     print("\nPASSED: interrupt propagated to top level, resume continued Enhancer's "
