@@ -81,14 +81,60 @@ def _price_of(item: dict) -> float:
     return float("inf")
 
 
-def rank_and_normalize(research_results: dict, top_n: int = 5) -> dict:
-    """Sort each domain's items by price ascending and trim to the top N. Pure/deterministic."""
+TIME_BANDS = ("morning", "afternoon", "evening", "night")
+
+
+def _departure_hour(item: dict) -> int | None:
+    """Flights-only: extract the departure hour from a trimmed offer's first slice."""
+    try:
+        departing_at = item["slices"][0]["departing_at"]
+        return int(departing_at[11:13])
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+
+
+def _time_band(hour: int) -> str:
+    if hour < 5:
+        hour += 24  # fold 0:00-4:59 into the same band as 21:00-23:59
+    if 5 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < 21:
+        return "evening"
+    return "night"
+
+
+def _matches_preferred_time(item: dict, preferred: str) -> bool:
+    hour = _departure_hour(item)
+    if hour is None:
+        return False
+    return _time_band(hour) == preferred
+
+
+def rank_and_normalize(research_results: dict, preferred_departure_time: str = "any", top_n: int = 5) -> dict:
+    """Sort each domain's items and trim to the top N. Pure/deterministic.
+
+    For flights, if the traveler stated a preferred departure time band (not
+    "any"), offers matching that band are prioritized first (still sorted by
+    price within each group) — a soft priority, not a hard filter, so a much
+    cheaper option outside the preferred band is never hidden entirely.
+    """
     ranked = {}
     for domain, result in research_results.items():
         if result.get("status") != "ok":
             ranked[domain] = result
             continue
-        sorted_items = sorted(result["items"], key=_price_of)
+
+        if domain == "flights" and preferred_departure_time in TIME_BANDS:
+            sort_key = lambda item: (  # noqa: E731
+                0 if _matches_preferred_time(item, preferred_departure_time) else 1,
+                _price_of(item),
+            )
+        else:
+            sort_key = _price_of
+
+        sorted_items = sorted(result["items"], key=sort_key)
         ranked[domain] = {"status": "ok", "items": sorted_items[:top_n]}
     return ranked
 

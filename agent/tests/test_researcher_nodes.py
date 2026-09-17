@@ -2,7 +2,7 @@ import json
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from researcher.nodes import extract_results, flag_insufficient, rank_and_normalize
+from researcher.nodes import _time_band, extract_results, flag_insufficient, rank_and_normalize
 
 
 def _tool_msg(name: str, content: dict) -> ToolMessage:
@@ -118,3 +118,71 @@ def test_flag_insufficient_flags_errors_and_empty_results_only():
 def test_flag_insufficient_ignores_domains_never_requested():
     research_results = {"flights": {"status": "ok", "items": [{"id": "off_1"}]}}
     assert flag_insufficient(research_results) == []
+
+
+def _flight(id_, departing_hour, minute="00", price="200.00"):
+    return {
+        "id": id_,
+        "total_amount": price,
+        "slices": [{"departing_at": f"2026-11-15T{departing_hour:02d}:{minute}:00"}],
+    }
+
+
+def test_time_band_boundaries():
+    assert _time_band(4) == "night"       # 4:59am still night
+    assert _time_band(5) == "morning"     # 5:00am starts morning
+    assert _time_band(11) == "morning"    # 11:59am still morning
+    assert _time_band(12) == "afternoon"  # noon starts afternoon
+    assert _time_band(16) == "afternoon"
+    assert _time_band(17) == "evening"
+    assert _time_band(20) == "evening"
+    assert _time_band(21) == "night"      # 9pm starts night
+    assert _time_band(0) == "night"       # midnight is still night
+
+
+def test_rank_and_normalize_prioritizes_preferred_time_band_without_hiding_cheaper_options():
+    research_results = {
+        "flights": {
+            "status": "ok",
+            "items": [
+                _flight("cheap_night", departing_hour=23, price="100.00"),
+                _flight("pricier_morning", departing_hour=8, price="180.00"),
+                _flight("cheapest_morning", departing_hour=6, price="150.00"),
+            ],
+        }
+    }
+    ranked = rank_and_normalize(research_results, preferred_departure_time="morning")
+    ids = [item["id"] for item in ranked["flights"]["items"]]
+    # Both morning flights come first (cheaper of the two first), the cheaper
+    # night flight comes last — deprioritized, but still present, not hidden.
+    assert ids == ["cheapest_morning", "pricier_morning", "cheap_night"]
+
+
+def test_rank_and_normalize_defaults_to_pure_price_sort_when_preference_is_any():
+    research_results = {
+        "flights": {
+            "status": "ok",
+            "items": [
+                _flight("night_flight", departing_hour=23, price="100.00"),
+                _flight("morning_flight", departing_hour=8, price="180.00"),
+            ],
+        }
+    }
+    ranked = rank_and_normalize(research_results, preferred_departure_time="any")
+    ids = [item["id"] for item in ranked["flights"]["items"]]
+    assert ids == ["night_flight", "morning_flight"]  # pure price order, cheapest first
+
+
+def test_rank_and_normalize_ignores_time_preference_for_non_flight_domains():
+    research_results = {
+        "stays": {
+            "status": "ok",
+            "items": [
+                {"search_result_id": "sr_1", "cheapest_rate_total_amount": "500.00"},
+                {"search_result_id": "sr_2", "cheapest_rate_total_amount": "300.00"},
+            ],
+        }
+    }
+    # A "morning" preference is flights-only — stays should still be pure price sort.
+    ranked = rank_and_normalize(research_results, preferred_departure_time="morning")
+    assert ranked["stays"]["items"][0]["search_result_id"] == "sr_2"

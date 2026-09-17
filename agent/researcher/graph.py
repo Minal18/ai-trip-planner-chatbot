@@ -33,7 +33,8 @@ async def build_researcher_graph():
         return {"research_results": extract_results(state["messages"])}
 
     def rank_node(state: ResearcherState) -> dict:
-        return {"research_results": rank_and_normalize(state["research_results"])}
+        preferred = state["request"].get("preferred_departure_time", "any")
+        return {"research_results": rank_and_normalize(state["research_results"], preferred_departure_time=preferred)}
 
     def flag_node(state: ResearcherState) -> dict:
         return {"insufficient_domains": flag_insufficient(state["research_results"])}

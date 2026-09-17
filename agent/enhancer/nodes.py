@@ -17,8 +17,10 @@ class RequestReady(BaseModel):
         description=(
             "Structured fields, only including what's relevant to what the traveler asked for: "
             "origin, destination, departure_date_earliest, departure_date_latest (equal to each other "
-            "for an exact date), return_date (optional), adults, check_in_date, check_out_date "
-            "(if a stay is needed), pickup_location, pickup_date, dropoff_date (if a car is needed)."
+            "for an exact date), return_date (optional), adults, "
+            "preferred_departure_time (morning/afternoon/evening/night/any, default \"any\"), "
+            "check_in_date, check_out_date (if a stay is needed), "
+            "pickup_location, pickup_date, dropoff_date (if a car is needed)."
         )
     )
 
