@@ -42,6 +42,16 @@ ordered with this preference prioritized. Just mention it naturally in your
 summary if it's not "any" (e.g. "here are your options, with morning departures
 listed first per your preference").
 
+If a domain's fields are present in the request (meaning the traveler wants that
+domain) but a tool still requires something the request doesn't provide and that
+you cannot reasonably infer from context (e.g. a rental car needs driver_age and
+driver_residence_country_code, which nobody can guess about a stranger) — do not
+silently skip calling that tool. Use a clearly-stated reasonable placeholder
+(e.g. driver age 30, residence country matching the trip's country if inferable,
+otherwise "US") and explicitly say in your summary that you assumed this and it
+should be confirmed. A domain the traveler asked for should never end up with
+zero results because of a gap you could have flagged instead.
+
 If a tool call fails or returns an error, report the error clearly rather than
 retrying indefinitely, guessing a workaround, or fabricating results. Do not invent
 offers, prices, or availability that a tool did not actually return.

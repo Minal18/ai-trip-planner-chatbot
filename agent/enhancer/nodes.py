@@ -20,7 +20,8 @@ class RequestReady(BaseModel):
             "for an exact date), return_date (optional), adults, "
             "preferred_departure_time (morning/afternoon/evening/night/any, default \"any\"), "
             "check_in_date, check_out_date (if a stay is needed), "
-            "pickup_location, pickup_date, dropoff_date (if a car is needed)."
+            "pickup_location, pickup_date, dropoff_date, pickup_time, dropoff_time, "
+            "driver_age, driver_residence_country_code (if a car is needed)."
         )
     )
 

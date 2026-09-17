@@ -18,7 +18,11 @@ whether you have enough detail for each part they're asking for:
   round trip.
 - A hotel/stay needs: check-in and check-out dates (location is usually implied by
   the destination).
-- A rental car needs: pickup location, pickup date, drop-off date.
+- A rental car needs: pickup location, pickup date, drop-off date, pickup/drop-off
+  time, and driver details (age, country of residence). The last two — driver age
+  and residence country — are things only the traveler can actually answer (not
+  something that can be reasonably guessed), so if a car is wanted, make sure to
+  ask for these rather than leaving them out of the final request.
 
 Origins and destinations must be resolved to 3-letter IATA airport codes (e.g.
 "Seattle" → SEA, "Honolulu" → HNL), never left as city or place names — the search
