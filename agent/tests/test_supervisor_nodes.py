@@ -22,14 +22,25 @@ def test_routes_to_planner_when_research_present_but_no_itinerary_yet():
     )
 
 
-def test_routes_to_done_when_itinerary_present():
+def test_routes_to_human_review_when_itinerary_present_but_no_decision_yet():
     assert (
         decide_next_step(
             {
                 "request": {"origin": "SEA"},
                 "research_results": {"flights": {"status": "ok"}},
                 "itinerary": {"summary": "..."},
+                "itinerary_status": None,
             }
         )
-        == "done"
+        == "human_review"
     )
+
+
+def test_routes_to_done_when_itinerary_status_decided():
+    base_state = {
+        "request": {"origin": "SEA"},
+        "research_results": {"flights": {"status": "ok"}},
+        "itinerary": {"summary": "..."},
+    }
+    for status in ("approved", "rejected", "edit_requested"):
+        assert decide_next_step({**base_state, "itinerary_status": status}) == "done"

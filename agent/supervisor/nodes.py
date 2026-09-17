@@ -9,4 +9,8 @@ def decide_next_step(state: dict) -> str:
         return "researcher"
     if state.get("itinerary") is None:
         return "planner"
+    if state.get("itinerary_status") is None:
+        return "human_review"
+    # "edit_requested" temporarily also ends here — classify_edit_feedback (the
+    # real routing for edits, back to Enhancer/Researcher/Planner) lands next.
     return "done"
