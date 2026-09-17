@@ -1,3 +1,4 @@
+import json
 from typing import Annotated, Optional, TypedDict
 
 from langchain_anthropic import ChatAnthropic
@@ -12,7 +13,14 @@ from hitl.nodes import Approve, RequestEdits, Reject, parse_response as parse_hi
 from hitl.prompts import SYSTEM_PROMPT as HITL_SYSTEM_PROMPT
 from planner.graph import build_planner_graph
 from researcher.graph import build_researcher_graph
-from supervisor.nodes import decide_next_step
+from supervisor.nodes import (
+    NeedsEnhancer,
+    NeedsPlanner,
+    NeedsResearcher,
+    decide_next_step,
+    parse_edit_classification,
+)
+from supervisor.prompts import EDIT_CLASSIFICATION_PROMPT
 
 
 class SupervisorState(TypedDict):
@@ -31,6 +39,9 @@ async def build_supervisor_graph():
     researcher_graph = await build_researcher_graph()
     planner_graph = build_planner_graph()
     hitl_model = ChatAnthropic(model="claude-sonnet-5").bind_tools([Approve, RequestEdits, Reject], tool_choice="any")
+    edit_classifier_model = ChatAnthropic(model="claude-sonnet-5").bind_tools(
+        [NeedsEnhancer, NeedsResearcher, NeedsPlanner], tool_choice="any"
+    )
 
     async def run_enhancer(state: SupervisorState) -> dict:
         result = await enhancer_graph.ainvoke({"messages": state["messages"]})
@@ -51,7 +62,9 @@ async def build_supervisor_graph():
                 "edit_feedback": state.get("edit_feedback"),
             }
         )
-        return {"itinerary": result["itinerary"]}
+        # Clear after consuming, so this round's feedback doesn't leak into a
+        # later, unrelated Planner invocation.
+        return {"itinerary": result["itinerary"], "edit_feedback": None}
 
     async def run_human_review(state: SupervisorState) -> dict:
         reply = interrupt({"itinerary_summary": state["itinerary"]["summary"]})
@@ -59,15 +72,24 @@ async def build_supervisor_graph():
         result = parse_hitl_response(response)
         return {**result, "messages": [HumanMessage(content=reply)]}
 
+    async def classify_edit_feedback(state: SupervisorState) -> dict:
+        payload = {
+            "feedback": state["edit_feedback"],
+            "current_request": state["request"],
+            "research_results": state["research_results"],
+        }
+        response = await edit_classifier_model.ainvoke(
+            [SystemMessage(content=EDIT_CLASSIFICATION_PROMPT), HumanMessage(content=json.dumps(payload))]
+        )
+        return parse_edit_classification(response)
+
     def announce_outcome(state: SupervisorState) -> dict:
         status = state["itinerary_status"]
         if status == "approved":
             # Placeholder until Booker exists — no booking happens yet.
             text = "Great — approved. (Booking isn't wired up yet, so nothing has actually been booked.)"
-        elif status == "rejected":
+        else:  # rejected
             text = "No problem — let me know if you'd like to start planning a different trip."
-        else:  # edit_requested — temporary placeholder, replaced once edit classification is built
-            text = f"Got your feedback ({state['edit_feedback']!r}) — edit handling isn't wired up yet."
         return {"messages": [AIMessage(content=text)]}
 
     graph = StateGraph(SupervisorState)
@@ -75,6 +97,7 @@ async def build_supervisor_graph():
     graph.add_node("researcher", run_researcher)
     graph.add_node("planner", run_planner)
     graph.add_node("human_review", run_human_review)
+    graph.add_node("classify_edit_feedback", classify_edit_feedback)
     graph.add_node("announce_outcome", announce_outcome)
 
     route_map = {
@@ -82,6 +105,7 @@ async def build_supervisor_graph():
         "researcher": "researcher",
         "planner": "planner",
         "human_review": "human_review",
+        "classify_edit_feedback": "classify_edit_feedback",
         "done": "announce_outcome",
     }
     graph.add_conditional_edges(START, decide_next_step, route_map)
@@ -89,6 +113,7 @@ async def build_supervisor_graph():
     graph.add_conditional_edges("researcher", decide_next_step, route_map)
     graph.add_conditional_edges("planner", decide_next_step, route_map)
     graph.add_conditional_edges("human_review", decide_next_step, route_map)
+    graph.add_conditional_edges("classify_edit_feedback", decide_next_step, route_map)
     graph.add_edge("announce_outcome", END)
 
     return graph.compile(checkpointer=MemorySaver())
