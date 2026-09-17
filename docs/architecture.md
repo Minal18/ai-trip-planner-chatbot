@@ -30,8 +30,10 @@ graph TD
     Researcher --> Supervisor
 
     Planner --> HITL{{Human-in-the-Loop Review}}
-    HITL <-->|approve / edit / reject| User
-    HITL -->|reject| End([End])
+    HITL --> User
+    User -->|approve| Supervisor
+    User -->|request edits| Supervisor
+    User -->|reject| End([End])
 
     Supervisor -->|approved| Booker[Booker Agent]
     Booker --> Supervisor
