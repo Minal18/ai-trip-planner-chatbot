@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
+from booker.graph import build_booker_graph
 from enhancer.graph import build_enhancer_graph
 from hitl.nodes import Approve, RequestEdits, Reject, parse_response as parse_hitl_response
 from hitl.prompts import SYSTEM_PROMPT as HITL_SYSTEM_PROMPT
@@ -32,12 +33,14 @@ class SupervisorState(TypedDict):
     itinerary: Optional[dict]
     itinerary_status: Optional[str]
     edit_feedback: Optional[str]
+    booking_result: Optional[dict]
 
 
 async def build_supervisor_graph():
     enhancer_graph = build_enhancer_graph(use_own_checkpointer=False)
     researcher_graph = await build_researcher_graph()
     planner_graph = build_planner_graph()
+    booker_graph = await build_booker_graph(use_own_checkpointer=False)
     hitl_model = ChatAnthropic(model="claude-sonnet-5").bind_tools([Approve, RequestEdits, Reject], tool_choice="any")
     edit_classifier_model = ChatAnthropic(model="claude-sonnet-5").bind_tools(
         [NeedsEnhancer, NeedsResearcher, NeedsPlanner], tool_choice="any"
@@ -83,13 +86,17 @@ async def build_supervisor_graph():
         )
         return parse_edit_classification(response)
 
+    async def run_booker(state: SupervisorState) -> dict:
+        result = await booker_graph.ainvoke(
+            {"itinerary": state["itinerary"], "research_results": state["research_results"]}
+        )
+        return {"booking_result": result}
+
     def announce_outcome(state: SupervisorState) -> dict:
-        status = state["itinerary_status"]
-        if status == "approved":
-            # Placeholder until Booker exists — no booking happens yet.
-            text = "Great — approved. (Booking isn't wired up yet, so nothing has actually been booked.)"
-        else:  # rejected
+        if state["itinerary_status"] == "rejected":
             text = "No problem — let me know if you'd like to start planning a different trip."
+        else:  # approved and booked (or attempted)
+            text = state["booking_result"]["final_message"]
         return {"messages": [AIMessage(content=text)]}
 
     graph = StateGraph(SupervisorState)
@@ -98,6 +105,7 @@ async def build_supervisor_graph():
     graph.add_node("planner", run_planner)
     graph.add_node("human_review", run_human_review)
     graph.add_node("classify_edit_feedback", classify_edit_feedback)
+    graph.add_node("booker", run_booker)
     graph.add_node("announce_outcome", announce_outcome)
 
     route_map = {
@@ -106,6 +114,7 @@ async def build_supervisor_graph():
         "planner": "planner",
         "human_review": "human_review",
         "classify_edit_feedback": "classify_edit_feedback",
+        "booker": "booker",
         "done": "announce_outcome",
     }
     graph.add_conditional_edges(START, decide_next_step, route_map)
@@ -114,6 +123,7 @@ async def build_supervisor_graph():
     graph.add_conditional_edges("planner", decide_next_step, route_map)
     graph.add_conditional_edges("human_review", decide_next_step, route_map)
     graph.add_conditional_edges("classify_edit_feedback", decide_next_step, route_map)
+    graph.add_conditional_edges("booker", decide_next_step, route_map)
     graph.add_edge("announce_outcome", END)
 
     return graph.compile(checkpointer=MemorySaver())

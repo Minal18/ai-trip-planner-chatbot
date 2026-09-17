@@ -16,7 +16,9 @@ def decide_next_step(state: dict) -> str:
         return "human_review"
     if state.get("itinerary_status") == "edit_requested":
         return "classify_edit_feedback"
-    return "done"  # approved or rejected
+    if state.get("itinerary_status") == "approved" and state.get("booking_result") is None:
+        return "booker"
+    return "done"  # rejected, or approved-and-booked
 
 
 class NeedsEnhancer(BaseModel):

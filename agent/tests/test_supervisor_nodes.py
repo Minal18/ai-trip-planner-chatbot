@@ -38,14 +38,36 @@ def test_routes_to_human_review_when_itinerary_present_but_no_decision_yet():
     )
 
 
-def test_routes_to_done_when_itinerary_status_decided():
+def test_routes_to_done_when_rejected():
     base_state = {
         "request": {"origin": "SEA"},
         "research_results": {"flights": {"status": "ok"}},
         "itinerary": {"summary": "..."},
+        "itinerary_status": "rejected",
     }
-    for status in ("approved", "rejected"):
-        assert decide_next_step({**base_state, "itinerary_status": status}) == "done"
+    assert decide_next_step(base_state) == "done"
+
+
+def test_routes_to_booker_when_approved_but_not_booked_yet():
+    base_state = {
+        "request": {"origin": "SEA"},
+        "research_results": {"flights": {"status": "ok"}},
+        "itinerary": {"summary": "..."},
+        "itinerary_status": "approved",
+        "booking_result": None,
+    }
+    assert decide_next_step(base_state) == "booker"
+
+
+def test_routes_to_done_when_approved_and_booked():
+    base_state = {
+        "request": {"origin": "SEA"},
+        "research_results": {"flights": {"status": "ok"}},
+        "itinerary": {"summary": "..."},
+        "itinerary_status": "approved",
+        "booking_result": {"final_message": "..."},
+    }
+    assert decide_next_step(base_state) == "done"
 
 
 def test_routes_to_classify_edit_feedback_when_edit_requested():
