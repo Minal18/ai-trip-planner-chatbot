@@ -13,8 +13,23 @@ def test_routes_to_researcher_when_request_present_but_no_research_yet():
     assert decide_next_step({"request": {"origin": "SEA"}, "research_results": None}) == "researcher"
 
 
-def test_routes_to_done_when_both_present():
+def test_routes_to_planner_when_research_present_but_no_itinerary_yet():
     assert (
-        decide_next_step({"request": {"origin": "SEA"}, "research_results": {"flights": {"status": "ok"}}})
+        decide_next_step(
+            {"request": {"origin": "SEA"}, "research_results": {"flights": {"status": "ok"}}, "itinerary": None}
+        )
+        == "planner"
+    )
+
+
+def test_routes_to_done_when_itinerary_present():
+    assert (
+        decide_next_step(
+            {
+                "request": {"origin": "SEA"},
+                "research_results": {"flights": {"status": "ok"}},
+                "itinerary": {"summary": "..."},
+            }
+        )
         == "done"
     )
