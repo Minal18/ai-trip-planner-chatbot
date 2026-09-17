@@ -30,7 +30,7 @@ graph TD
     Researcher --> Supervisor
 
     Planner --> HITL{{Human-in-the-Loop Review}}
-    HITL <--> User
+    HITL <-->|approve / edit / reject| User
     HITL -->|reject| End([End])
 
     Supervisor -->|approved| Booker[Booker Agent]
@@ -57,10 +57,14 @@ The Human-in-the-Loop Review is drawn as a hexagon, not a box, because it isn't 
 agent — it's a LangGraph `interrupt` that pauses the graph and hands control back to
 the traveler directly. The traveler has three options: **approve** (control returns
 to the Supervisor, which is the only thing that can then route to Booker), **request
-edits** (control returns to Planner with the traveler's feedback), or **reject**
-(the graph ends — no further action is taken). Booker still has exactly one path
-in — via the Supervisor, and only on the approve branch — so no booking can happen
-without the traveler having explicitly seen and approved the final itinerary.
+edits** (control returns to the Supervisor — not directly to Planner — since the
+feedback might mean the trip's core details need revisiting (Enhancer), a new
+search is needed (Researcher), or the existing options just need re-picking
+(Planner); Supervisor is the only place that knows enough about the rest of the
+system's state to tell these apart), or **reject** (the graph ends — no further
+action is taken). Booker still has exactly one path in — via the Supervisor, and
+only on the approve branch — so no booking can happen without the traveler having
+explicitly seen and approved the final itinerary.
 
 ---
 
@@ -72,6 +76,13 @@ without the traveler having explicitly seen and approved the final itinerary.
   state and what the user just said.
 - Owns the overall trip-planning state object (see §5) and decides when a trip
   request is "complete enough" to move from research → planning → booking.
+- Most routing decisions are deterministic — driven by which pieces of shared state
+  are already populated, not by an LLM call (e.g. no `request` yet → Enhancer; a
+  `request` but no `research_results` yet → Researcher). One transition genuinely
+  needs judgment rather than a fixed rule: classifying traveler edit feedback
+  (after Human-in-the-Loop Review, §3.6) into which agent should handle it — that's
+  the one point where Supervisor makes an LLM call, forced to choose among
+  Enhancer/Researcher/Planner based on what the feedback actually says.
 - Does **not** call any MCP tools directly — it only orchestrates.
 
 ### 3.2 Enhancer Agent
@@ -109,8 +120,10 @@ without the traveler having explicitly seen and approved the final itinerary.
   directly to the traveler, immediately after the Planner produces an itinerary.
 - Presents the finalized itinerary and re-fetched, current pricing.
 - Three possible outcomes: **approve** (returns control to the Supervisor, which then
-  invokes Booker), **request edits** (returns to Planner with feedback), or **reject**
-  (ends the graph).
+  invokes Booker), **request edits** (returns to the Supervisor with feedback —
+  Supervisor classifies which agent the feedback actually requires, since it isn't
+  always Planner: it might mean revisiting core trip details, or a new search),
+  or **reject** (ends the graph).
 - No path from Supervisor or Planner reaches Booker directly — approval through this
   step is the only way in.
 - Also used for post-booking actions with financial/irreversible consequences
@@ -212,18 +225,30 @@ graph.
 
 ### 7.1 Supervisor
 
-The Supervisor doesn't need a multi-node subgraph of its own — it's a single LLM
-call that reads shared state and emits a routing decision, which the top-level
-graph's conditional edge acts on.
+The Supervisor doesn't need a multi-node subgraph of its own. Most routing is a
+plain deterministic check of which state fields are already populated — no LLM
+call needed, since there's no ambiguity to resolve (e.g. "is `request` filled in
+yet?" has exactly one correct answer). The one exception is classifying edit
+feedback coming back from Human-in-the-Loop Review (§3.6/§7.5): that requires an
+LLM call, forced to choose among Enhancer/Researcher/Planner, since telling "fly
+from a different city instead" (needs Researcher) apart from "pick the cheaper
+option" (needs Planner) apart from "actually, let's also add a rental car" (needs
+Enhancer) genuinely requires understanding the feedback's content, not a field
+check.
 
 ```mermaid
 graph TD
-    Start([START]) --> Assess[assess_state<br/>LLM reads shared state]
-    Assess --> Decide{next_agent?}
-    Decide -->|missing info| ToEnhancer([→ Enhancer subgraph])
-    Decide -->|ready to search| ToResearcher([→ Researcher subgraph])
-    Decide -->|options in hand| ToPlanner([→ Planner subgraph])
-    Decide -->|approved| ToBooker([→ Booker subgraph])
+    Start([START]) --> Decide{state check}
+    Decide -->|no request yet| ToEnhancer([→ Enhancer subgraph])
+    Decide -->|request, no research yet| ToResearcher([→ Researcher subgraph])
+    Decide -->|research, no itinerary yet| ToPlanner([→ Planner subgraph])
+    Decide -->|itinerary, no decision yet| ToHITL([→ Human-in-the-loop review])
+    Decide -->|itinerary approved| ToBooker([→ Booker subgraph])
+    Decide -->|itinerary rejected| End([END])
+    Decide -->|edit feedback pending| Classify[classify_edit_feedback<br/>LLM: which agent does this need?]
+    Classify -->|core details changed| ToEnhancer
+    Classify -->|new search needed| ToResearcher
+    Classify -->|re-pick existing options| ToPlanner
 ```
 
 ### 7.2 Enhancer subgraph
@@ -254,20 +279,28 @@ graph TD
 
 ### 7.4 Planner subgraph
 
+By the time Supervisor invokes Planner, it has already decided the traveler's
+request (any edit feedback included) can be satisfied from `research_results`
+already in hand — Supervisor's own routing (§7.1) is what sends feedback needing a
+new search back to Researcher, or feedback needing core details revisited back to
+Enhancer, before Planner ever runs. So Planner doesn't need its own "am I
+re-entering with feedback" branch, or an escalate-to-Researcher path — it always
+does the same job: assemble the best itinerary from whatever's currently in state.
+
 ```mermaid
 graph TD
-    Start([START]) --> Feedback{re-entering with<br/>traveler edit feedback?}
-    Feedback -->|yes| Incorporate[incorporate_feedback]
-    Feedback -->|no| Consistency[check_consistency<br/>dates, locations across domains]
-    Incorporate --> Consistency
+    Start([START]) --> Generate[generate_itineraries<br/>from research_results,<br/>incorporating any edit feedback]
+    Generate --> Consistency[check_consistency<br/>dates, locations across domains]
     Consistency --> OK{consistent?}
-    OK -->|no| MoreResearch[request_more_research]
-    OK -->|yes| Generate[generate_itineraries<br/>1-3 candidates]
-    MoreResearch --> End3([END → Supervisor,<br/>re-invoke Researcher])
-    Generate --> Price[attach_pricing]
+    OK -->|no, retry once| Generate
+    OK -->|yes| Price[attach_pricing]
     Price --> Recommend[recommend<br/>pick + explain trade-offs]
     Recommend --> End4([END → Human-in-the-loop review])
 ```
+
+The bounded single retry (not a full escalation back to Researcher) is a
+deliberate MVP scoping choice — see `docs/pending-items.md` for when a genuine
+"data itself is insufficient" escalation path would become worth building.
 
 ### 7.5 Human-in-the-loop review
 
@@ -280,7 +313,7 @@ graph TD
     Present --> Interrupt[[interrupt: wait for traveler]]
     Interrupt --> Route{decision}
     Route -->|approve| End5([END → Supervisor])
-    Route -->|request edits| End6([END → Planner,<br/>with feedback])
+    Route -->|request edits| End6([END → Supervisor,<br/>with feedback, for classification])
     Route -->|reject| End7([END → graph ends])
 ```
 
