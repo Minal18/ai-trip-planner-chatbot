@@ -17,7 +17,8 @@ HEADERS = {
 
 # Cars access is currently gated on Duffel's side (403, account not yet approved).
 # This lets development/testing proceed against realistic fake data in the meantime —
-# scoped to search only, since that's the only tool Researcher currently calls.
+# covers search plus the full booking flow (quote, booking, cancel), since Booker
+# now exercises all of it, not just Researcher's search.
 # Swap back to real calls by removing/unsetting the env var, no code change needed.
 MOCK_MODE = os.environ.get("DUFFEL_MOCK_MODE", "false").lower() == "true"
 
@@ -59,9 +60,34 @@ def _mock_cars_search_response(payload: dict) -> dict:
     }
 
 
+def _mock_cars_quote_response() -> dict:
+    return {"data": {"id": "quo_mock_car_1", "total_amount": "38.00", "total_currency": "USD"}}
+
+
+def _mock_cars_booking_response() -> dict:
+    return {"data": {"id": "ord_mock_car_1", "reference": "CARMOCKREF1", "confirmed_at": "2026-09-17T00:00:00Z"}}
+
+
+def _mock_cars_get_booking_response() -> dict:
+    return {"data": {"id": "ord_mock_car_1", "reference": "CARMOCKREF1", "cancelled_at": None}}
+
+
+def _mock_cars_cancel_response() -> dict:
+    return {"data": {"id": "ord_mock_car_1"}}
+
+
 async def _request(method: str, path: str, **kwargs) -> dict:
-    if MOCK_MODE and method == "POST" and path == "/cars/search":
-        return _mock_cars_search_response(kwargs.get("json", {}))
+    if MOCK_MODE:
+        if method == "POST" and path == "/cars/search":
+            return _mock_cars_search_response(kwargs.get("json", {}))
+        if method == "POST" and path == "/cars/quotes":
+            return _mock_cars_quote_response()
+        if method == "POST" and path == "/cars/bookings":
+            return _mock_cars_booking_response()
+        if method == "POST" and path.startswith("/cars/bookings/") and path.endswith("/actions/cancel"):
+            return _mock_cars_cancel_response()
+        if method == "GET" and path.startswith("/cars/bookings/"):
+            return _mock_cars_get_booking_response()
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.request(method, f"{DUFFEL_API}{path}", headers=HEADERS, **kwargs)

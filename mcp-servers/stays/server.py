@@ -17,7 +17,8 @@ HEADERS = {
 
 # Stays access is currently gated on Duffel's side (403, account not yet approved).
 # This lets development/testing proceed against realistic fake data in the meantime —
-# scoped to search only, since that's the only tool Researcher currently calls.
+# covers search plus the full booking flow (rates, quote, booking, cancel), since
+# Booker now exercises all of it, not just Researcher's search.
 # Swap back to real calls by removing/unsetting the env var, no code change needed.
 MOCK_MODE = os.environ.get("DUFFEL_MOCK_MODE", "false").lower() == "true"
 
@@ -58,9 +59,70 @@ def _mock_stays_search_response(payload: dict) -> dict:
     }
 
 
+def _mock_fetch_all_rates_response() -> dict:
+    return {
+        "data": {
+            "name": "Mock Accommodation",
+            "rooms": [
+                {
+                    "name": "Standard Room",
+                    "rates": [
+                        {"id": "rat_mock_std_refundable", "total_amount": "149.00", "total_currency": "USD",
+                         "payment_type": "pay_at_accommodation", "board_type": "room_only"},
+                        {"id": "rat_mock_std_nonrefundable", "total_amount": "119.00", "total_currency": "USD",
+                         "payment_type": "pay_now", "board_type": "room_only"},
+                    ],
+                },
+                {
+                    "name": "Deluxe Room, Breakfast Included",
+                    "rates": [
+                        {"id": "rat_mock_deluxe", "total_amount": "199.00", "total_currency": "USD",
+                         "payment_type": "pay_at_accommodation", "board_type": "breakfast"},
+                    ],
+                },
+            ],
+        }
+    }
+
+
+def _mock_quote_response() -> dict:
+    return {"data": {"id": "quo_mock_1", "total_amount": "149.00", "total_currency": "USD"}}
+
+
+def _mock_booking_response() -> dict:
+    return {"data": {"id": "ord_mock_1", "reference": "MOCKREF1", "status": "confirmed"}}
+
+
+def _mock_get_booking_response() -> dict:
+    return {
+        "data": {
+            "id": "ord_mock_1",
+            "reference": "MOCKREF1",
+            "status": "confirmed",
+            "check_in_date": "2026-11-15",
+            "check_out_date": "2026-11-20",
+        }
+    }
+
+
+def _mock_cancel_response() -> dict:
+    return {"data": {"id": "ord_mock_1", "status": "cancelled"}}
+
+
 async def _request(method: str, path: str, **kwargs) -> dict:
-    if MOCK_MODE and method == "POST" and path == "/stays/search":
-        return _mock_stays_search_response(kwargs.get("json", {}))
+    if MOCK_MODE:
+        if method == "POST" and path == "/stays/search":
+            return _mock_stays_search_response(kwargs.get("json", {}))
+        if method == "POST" and path.startswith("/stays/search_results/") and path.endswith("/actions/fetch_all_rates"):
+            return _mock_fetch_all_rates_response()
+        if method == "POST" and path == "/stays/quotes":
+            return _mock_quote_response()
+        if method == "POST" and path == "/stays/bookings":
+            return _mock_booking_response()
+        if method == "POST" and path.startswith("/stays/bookings/") and path.endswith("/actions/cancel"):
+            return _mock_cancel_response()
+        if method == "GET" and path.startswith("/stays/bookings/"):
+            return _mock_get_booking_response()
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.request(method, f"{DUFFEL_API}{path}", headers=HEADERS, **kwargs)
