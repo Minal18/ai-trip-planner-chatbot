@@ -19,3 +19,18 @@ isn't meaningfully testable yet anyway.
 **Revisit when**: real Cars API access is granted and genuine unavailability
 becomes observable, or if flights/stays empty-intersection cases turn up in
 practice despite the above assumption.
+
+## §7.1 Supervisor subgraph diagram readability
+
+The Mermaid diagram in `docs/architecture.md` §7.1 (added when Supervisor's
+edit-feedback classification was designed) is hard to read — too many branches
+crammed into one diagram once the `classify_edit_feedback` node and its three
+sub-outcomes were added on top of the original state-check branches.
+
+**Why deferred**: not blocking implementation — the diagram is still accurate,
+just visually dense. Not worth redesigning mid-build.
+
+**Revisit when**: implementation of Planner/HITL/edit-classification is done and
+stable, so the diagram can be redrawn once (e.g. splitting the state-check
+branches and the edit-classification sub-flow into two separate diagrams) rather
+than reworking it repeatedly while the design is still moving.
