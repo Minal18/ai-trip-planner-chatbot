@@ -121,19 +121,6 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
 
         return {"booking_results": results}
 
-    async def compensate_if_needed(state: BookerState) -> dict:
-        results = state["booking_results"]
-        failed = [d for d, r in results.items() if "error" in r]
-        succeeded = [d for d, r in results.items() if "error" not in r]
-        if not failed or not succeeded:
-            return {}
-
-        cancel_tool = {"flight": "cancel_booking", "stay": "cancel_stay_booking", "car": "cancel_car_booking"}
-        for domain in succeeded:
-            await tools[cancel_tool[domain]].ainvoke({"booking_id": booking_id_of(results[domain])})
-            results[domain]["status"] = "cancelled (compensating for partial failure)"
-        return {"booking_results": results}
-
     def compile_result(state: BookerState) -> dict:
         results = state.get("booking_results") or {}
         if not results:
@@ -147,29 +134,22 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
             else:
                 lines.append(f"- {domain}: confirmed, reference {reference_of(r) or booking_id_of(r)}")
         if failed:
-            lines.append("\nSome bookings failed — anything that did succeed was cancelled to avoid a stranded partial trip.")
+            # Each booking is independent — a failure here doesn't cancel what
+            # succeeded elsewhere. The traveler keeps whatever worked and can
+            # retry just the failed piece.
+            lines.append(f"\n{', '.join(failed)} didn't book — let me know if you'd like to retry just that part.")
         return {"final_message": "\n".join(lines)}
-
-    def route_after_book(state: BookerState) -> str:
-        results = state["booking_results"]
-        failed = [d for d, r in results.items() if "error" in r]
-        succeeded = [d for d, r in results.items() if "error" not in r]
-        return "compensate_if_needed" if (failed and succeeded) else "compile_result"
 
     graph = StateGraph(BookerState)
     graph.add_node("collect_passenger_details", collect_passenger_details)
     graph.add_node("resolve_stay_rate", resolve_stay_rate)
     graph.add_node("book", book)
-    graph.add_node("compensate_if_needed", compensate_if_needed)
     graph.add_node("compile_result", compile_result)
 
     graph.add_edge(START, "collect_passenger_details")
     graph.add_edge("collect_passenger_details", "resolve_stay_rate")
     graph.add_edge("resolve_stay_rate", "book")
-    graph.add_conditional_edges(
-        "book", route_after_book, {"compensate_if_needed": "compensate_if_needed", "compile_result": "compile_result"}
-    )
-    graph.add_edge("compensate_if_needed", "compile_result")
+    graph.add_edge("book", "compile_result")
     graph.add_edge("compile_result", END)
 
     return graph.compile(checkpointer=MemorySaver() if use_own_checkpointer else None)
