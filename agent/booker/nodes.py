@@ -77,17 +77,3 @@ def reference_of(result: dict):
     """Pure: flights' book_flight returns booking_reference; stays/cars' book_*
     return reference — this normalizes the lookup so callers don't need to know which."""
     return result.get("reference") or result.get("booking_reference")
-
-
-def price_changed_materially(old_amount, new_amount, threshold: float = 0.02) -> bool:
-    """Pure: True if new_amount differs from old_amount by more than `threshold` (2% default).
-    Treated as changed (safer default) if either value can't be parsed as a number.
-    """
-    try:
-        old = float(old_amount)
-        new = float(new_amount)
-    except (TypeError, ValueError):
-        return True
-    if old == 0:
-        return new != 0
-    return abs(new - old) / old > threshold

@@ -5,7 +5,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
-from pydantic import BaseModel
 
 from booker.mcp_tools import load_booker_tools
 from booker.nodes import (
@@ -14,18 +13,9 @@ from booker.nodes import (
     get_selected_items,
     parse_passenger_details,
     parse_tool_output,
-    price_changed_materially,
     reference_of,
 )
 from booker.prompts import PASSENGER_EXTRACTION_PROMPT
-
-
-class ConfirmAtNewPrice(BaseModel):
-    """The traveler accepts the new price(s) and wants to proceed with booking."""
-
-
-class CancelDueToPriceChange(BaseModel):
-    """The traveler does not accept the new price(s) — don't book anything."""
 
 
 class BookerState(TypedDict):
@@ -33,9 +23,6 @@ class BookerState(TypedDict):
     research_results: dict
     passenger: Optional[dict]
     resolved_stay_rate_id: Optional[str]
-    needs_reconfirm: Optional[bool]
-    reprice_summary: Optional[str]
-    reconfirmed: Optional[bool]
     booking_results: Optional[dict]
     final_message: Optional[str]
 
@@ -46,9 +33,6 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
     graph (e.g. Supervisor) — same reasoning as Enhancer's build_enhancer_graph."""
     tools = await load_booker_tools()
     passenger_model = ChatAnthropic(model="claude-sonnet-5").bind_tools([PassengerDetails], tool_choice="any")
-    reconfirm_model = ChatAnthropic(model="claude-sonnet-5").bind_tools(
-        [ConfirmAtNewPrice, CancelDueToPriceChange], tool_choice="any"
-    )
 
     async def collect_passenger_details(state: BookerState) -> dict:
         reply = interrupt(
@@ -62,56 +46,24 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
         )
         return {"passenger": parse_passenger_details(response)}
 
-    async def reprice_offers(state: BookerState) -> dict:
+    async def resolve_stay_rate(state: BookerState) -> dict:
+        # Not a reprice check — itinerary only recorded a search_result_id (an
+        # accommodation), not a bookable rate_id. book_stay needs a real rate_id,
+        # which only get_stay_rate can produce. Duffel's own booking call already
+        # rejects a stale/expired rate cleanly, so there's no separate price
+        # comparison here — see the conversation that led to simplifying this.
         selected = get_selected_items(state["itinerary"], state["research_results"])
-        changed = False
-        summary_lines = []
-        resolved_stay_rate_id = None
+        if not selected["stay"]:
+            return {}
 
-        if selected["flight"]:
-            fresh = parse_tool_output(await tools["get_offer"].ainvoke({"offer_id": selected["flight"]["id"]}))
-            if "error" in fresh:
-                changed = True
-                summary_lines.append(f"Flight: could not re-verify ({fresh['error']}) — treating as changed.")
-            else:
-                old_price = selected["flight"]["total_amount"]
-                new_price = fresh.get("total_amount")
-                if price_changed_materially(old_price, new_price):
-                    changed = True
-                    summary_lines.append(f"Flight: was ${old_price}, now ${new_price}.")
-
-        if selected["stay"]:
-            fresh = parse_tool_output(
-                await tools["get_stay_rate"].ainvoke({"search_result_id": selected["stay"]["search_result_id"]})
-            )
-            if "error" in fresh or not fresh.get("rates"):
-                changed = True
-                summary_lines.append("Stay: could not re-verify rates — treating as changed.")
-            else:
-                cheapest = min(fresh["rates"], key=lambda r: float(r["total_amount"]))
-                resolved_stay_rate_id = cheapest["rate_id"]
-                old_price = selected["stay"]["cheapest_rate_total_amount"]
-                new_price = cheapest["total_amount"]
-                if price_changed_materially(old_price, new_price):
-                    changed = True
-                    summary_lines.append(f"Stay: was ${old_price}, now ${new_price}.")
-
-        # Cars have no reprice tool — booked directly at the originally-shown price.
-
-        return {
-            "needs_reconfirm": changed,
-            "reprice_summary": " ".join(summary_lines) if summary_lines else None,
-            "resolved_stay_rate_id": resolved_stay_rate_id,
-        }
-
-    async def reconfirm(state: BookerState) -> dict:
-        reply = interrupt(
-            {"question": f"Prices changed before booking: {state['reprice_summary']} Proceed anyway, or cancel?"}
+        fresh = parse_tool_output(
+            await tools["get_stay_rate"].ainvoke({"search_result_id": selected["stay"]["search_result_id"]})
         )
-        response = await reconfirm_model.ainvoke([HumanMessage(content=reply)])
-        if not response.tool_calls:
-            raise ValueError("Reconfirm response contained no tool call")
-        return {"reconfirmed": response.tool_calls[0]["name"] == "ConfirmAtNewPrice"}
+        if "error" in fresh or not fresh.get("rates"):
+            return {"resolved_stay_rate_id": None}
+
+        cheapest = min(fresh["rates"], key=lambda r: float(r["total_amount"]))
+        return {"resolved_stay_rate_id": cheapest["rate_id"]}
 
     async def book(state: BookerState) -> dict:
         itinerary = state["itinerary"]
@@ -135,19 +87,22 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
             )
             results["flight"] = result
 
-        if itinerary.get("selected_stay_id") and state.get("resolved_stay_rate_id"):
-            result = parse_tool_output(
-                await tools["book_stay"].ainvoke(
-                    {
-                        "rate_id": state["resolved_stay_rate_id"],
-                        "guest_given_name": p["given_name"],
-                        "guest_family_name": p["family_name"],
-                        "guest_email": p["email"],
-                        "guest_phone_number": p["phone_number"],
-                    }
+        if itinerary.get("selected_stay_id"):
+            if not state.get("resolved_stay_rate_id"):
+                results["stay"] = {"error": "Could not resolve a bookable rate for the selected stay."}
+            else:
+                result = parse_tool_output(
+                    await tools["book_stay"].ainvoke(
+                        {
+                            "rate_id": state["resolved_stay_rate_id"],
+                            "guest_given_name": p["given_name"],
+                            "guest_family_name": p["family_name"],
+                            "guest_email": p["email"],
+                            "guest_phone_number": p["phone_number"],
+                        }
+                    )
                 )
-            )
-            results["stay"] = result
+                results["stay"] = result
 
         if itinerary.get("selected_car_id"):
             result = parse_tool_output(
@@ -180,9 +135,6 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
         return {"booking_results": results}
 
     def compile_result(state: BookerState) -> dict:
-        if state.get("reconfirmed") is False:
-            return {"final_message": "Booking cancelled — prices changed and you didn't want to proceed at the new price."}
-
         results = state.get("booking_results") or {}
         if not results:
             return {"final_message": "Nothing was booked."}
@@ -198,12 +150,6 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
             lines.append("\nSome bookings failed — anything that did succeed was cancelled to avoid a stranded partial trip.")
         return {"final_message": "\n".join(lines)}
 
-    def route_after_reprice(state: BookerState) -> str:
-        return "reconfirm" if state["needs_reconfirm"] else "book"
-
-    def route_after_reconfirm(state: BookerState) -> str:
-        return "book" if state["reconfirmed"] else "compile_result"
-
     def route_after_book(state: BookerState) -> str:
         results = state["booking_results"]
         failed = [d for d, r in results.items() if "error" in r]
@@ -212,18 +158,14 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
 
     graph = StateGraph(BookerState)
     graph.add_node("collect_passenger_details", collect_passenger_details)
-    graph.add_node("reprice_offers", reprice_offers)
-    graph.add_node("reconfirm", reconfirm)
+    graph.add_node("resolve_stay_rate", resolve_stay_rate)
     graph.add_node("book", book)
     graph.add_node("compensate_if_needed", compensate_if_needed)
     graph.add_node("compile_result", compile_result)
 
     graph.add_edge(START, "collect_passenger_details")
-    graph.add_edge("collect_passenger_details", "reprice_offers")
-    graph.add_conditional_edges("reprice_offers", route_after_reprice, {"reconfirm": "reconfirm", "book": "book"})
-    graph.add_conditional_edges(
-        "reconfirm", route_after_reconfirm, {"book": "book", "compile_result": "compile_result"}
-    )
+    graph.add_edge("collect_passenger_details", "resolve_stay_rate")
+    graph.add_edge("resolve_stay_rate", "book")
     graph.add_conditional_edges(
         "book", route_after_book, {"compensate_if_needed": "compensate_if_needed", "compile_result": "compile_result"}
     )

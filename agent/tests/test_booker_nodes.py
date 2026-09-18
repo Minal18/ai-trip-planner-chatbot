@@ -6,7 +6,6 @@ from booker.nodes import (
     get_selected_items,
     parse_passenger_details,
     parse_tool_output,
-    price_changed_materially,
     reference_of,
 )
 
@@ -58,23 +57,6 @@ def test_get_selected_items_none_for_unselected_domains():
     result = get_selected_items(itinerary, research_results)
     assert result["stay"] is None
     assert result["car"] is None
-
-
-def test_price_changed_materially_small_change_not_flagged():
-    assert price_changed_materially("100.00", "101.00") is False  # 1% change
-
-
-def test_price_changed_materially_large_change_flagged():
-    assert price_changed_materially("100.00", "110.00") is True  # 10% change
-
-
-def test_price_changed_materially_exactly_at_threshold_not_flagged():
-    assert price_changed_materially("100.00", "102.00") is False  # exactly 2%
-
-
-def test_price_changed_materially_unparseable_defaults_to_changed():
-    assert price_changed_materially("100.00", None) is True
-    assert price_changed_materially(None, "100.00") is True
 
 
 def test_parse_tool_output_unwraps_content_blocks():
