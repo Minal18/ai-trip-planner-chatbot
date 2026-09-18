@@ -70,7 +70,11 @@ async def build_supervisor_graph():
         return {"itinerary": result["itinerary"], "edit_feedback": None}
 
     async def run_human_review(state: SupervisorState) -> dict:
-        reply = interrupt({"itinerary_summary": state["itinerary"]["summary"]})
+        prompt = (
+            state["itinerary"]["summary"]
+            + "\n\nWould you like to approve this, ask for changes, or decline?"
+        )
+        reply = interrupt({"itinerary_summary": prompt})
         response = await hitl_model.ainvoke([SystemMessage(content=HITL_SYSTEM_PROMPT), HumanMessage(content=reply)])
         result = parse_hitl_response(response)
         return {**result, "messages": [HumanMessage(content=reply)]}
