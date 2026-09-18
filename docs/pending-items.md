@@ -34,3 +34,38 @@ just visually dense. Not worth redesigning mid-build.
 stable, so the diagram can be redrawn once (e.g. splitting the state-check
 branches and the edit-classification sub-flow into two separate diagrams) rather
 than reworking it repeatedly while the design is still moving.
+
+## Chat UI
+
+Not built. All testing so far has been via terminal REPL scripts
+(`agent/tests/test_supervisor_repl.py`), standing in for a real chat interface.
+
+**Why deferred (until now)**: earlier decided to hold off until the full agent
+workflow existed, so the UI could be designed against real interaction patterns
+(HITL's approve/edit/reject, Booker's passenger-detail collection) rather than a
+placeholder that would need reworking once those existed.
+
+**Revisit when**: now — the full pipeline (Enhancer → Researcher → Planner → HITL
+→ Booker) is built, wired, and verified end-to-end, so this is the next planned
+step.
+
+## Prompt caching (latency/cost reduction)
+
+Not implemented. Every LLM call re-sends its full system prompt from scratch on
+every turn — e.g. Enhancer's system prompt is ~967 tokens, resent in full on every
+single turn of a conversation, not just once.
+
+**Why it matters**: real, avoidable latency and cost per turn, compounding as a
+conversation grows — the growing message history genuinely needs to be resent
+each time (that's unavoidable), but the *static* system prompt text re-transmitting
+identically every turn is pure overhead.
+
+**What to do**: Anthropic supports prompt caching — marking the system prompt as a
+reusable cached block so repeated calls with an identical prefix are billed/load
+at a fraction of full cost and latency. Since each agent's system prompt is
+byte-for-byte identical across turns (Enhancer's only varies by the date, which
+changes at most once a day), this is close to an ideal candidate.
+
+**Revisit when**: conversation length or per-turn latency becomes a real concern
+in practice — not urgent at current scale, but a well-understood, low-effort win
+whenever it is.
