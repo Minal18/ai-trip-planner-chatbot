@@ -69,3 +69,24 @@ changes at most once a day), this is close to an ideal candidate.
 **Revisit when**: conversation length or per-turn latency becomes a real concern
 in practice — not urgent at current scale, but a well-understood, low-effort win
 whenever it is.
+
+## End-to-end workflow walkthrough (documentation)
+
+Not written. `docs/architecture.md` covers the design (diagrams, per-agent
+responsibilities), but there's no single doc that walks through, with a concrete
+worked example, how a request actually moves through the whole system turn by
+turn — what `decide_next_step` checks at each point, which agent gets invoked and
+why, and how state fields get filled in as the conversation progresses.
+
+**Why deferred**: explanatory/onboarding documentation, not something blocking
+further implementation.
+
+**What it should cover**: a full trace using one concrete example (e.g. "flight +
+hotel to Honolulu") — the `SupervisorState` at each step, which node runs next and
+which specific field-check in `decide_next_step` sent it there, and how each
+agent's output becomes the next transition's input. Should make explicit that
+most routing is a plain deterministic state check, with `classify_edit_feedback`
+as the one LLM-judged exception.
+
+**Revisit when**: good candidate to pair with the chat UI work, or whenever the
+project needs onboarding/portfolio-ready documentation.
