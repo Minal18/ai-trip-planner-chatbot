@@ -321,22 +321,32 @@ graph TD
 
 ```mermaid
 graph TD
-    Start([START]) --> Reprice[reprice_offers<br/>get_offer / get_stay_rate]
-    Reprice --> Changed{price or availability<br/>changed materially?}
-    Changed -->|yes| Reconfirm[flag_for_reconfirmation]
-    Changed -->|no| Book[call_booking_tools<br/>book_flight, book_stay]
-    Reconfirm --> End8([END → Human-in-the-loop,<br/>re-confirm])
-    Book --> Success{all components<br/>booked?}
-    Success -->|no| Compensate[compensate_partial<br/>cancel what succeeded]
-    Success -->|yes| Confirm[compile_confirmation]
-    Compensate --> Report[compile_failure_report]
+    Start([START]) --> Passenger[[interrupt: collect<br/>passenger details]]
+    Passenger --> Resolve[resolve_stay_rate<br/>get_stay_rate, if a stay was selected]
+    Resolve --> Book[call_booking_tools<br/>book_flight, book_stay, book_car]
+    Book --> Confirm[compile_result]
     Confirm --> End9([END → Supervisor])
-    Report --> End9
 ```
 
-The reprice-before-booking step and the partial-failure compensation path (§7.6)
-are both explicit nodes here, not afterthoughts — worth keeping even for MVP given
-two independent booking calls are a realistic failure mode.
+Two things this deliberately does **not** do, both cut after building them and
+finding them unnecessary in practice:
+
+- **No reprice-before-booking step.** `book_flight`/`book_stay` already reject a
+  stale or expired offer cleanly on their own — Duffel's booking call either
+  succeeds at the offer's current price or fails outright; there's no scenario
+  where it silently books at a different price than what the traveler approved.
+  A separate reprice-and-reconfirm pass was redundant with that existing
+  behavior, and added an extra interrupt for the common case where nothing had
+  changed. (`get_stay_rate` is still called — not for repricing, but because
+  it's the only way to resolve a bookable `rate_id`, which the itinerary never
+  captures on its own.)
+- **No compensate-on-partial-failure.** Flight, stay, and car bookings are three
+  independent API calls, not one atomic transaction — a stay booking failing
+  doesn't make a successful flight booking useless. Auto-cancelling whatever
+  succeeded destroys something that worked, without asking, for a "stranded
+  trip" scenario that's rarer than it sounds given these aren't bundled. Instead,
+  Booker reports per-domain results and invites the traveler to retry just the
+  failed piece.
 
 ## 8. MVP definition of done
 
