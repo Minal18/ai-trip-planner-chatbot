@@ -2,7 +2,7 @@ import json
 from typing import TypedDict
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import create_react_agent
 
@@ -21,7 +21,14 @@ class ResearcherState(TypedDict):
 async def build_researcher_graph():
     tools = await load_researcher_tools()
     model = ChatAnthropic(model="claude-sonnet-5")
-    react_agent = create_react_agent(model, tools, prompt=SYSTEM_PROMPT)
+    # Cached: reused both within a single Researcher turn (the ReAct loop's
+    # tool-selection call and its final-summary call share this same prefix)
+    # and across turns in a conversation, since this prompt is a constant,
+    # never varies. 5-minute TTL, same reasoning as Enhancer.
+    cached_prompt = SystemMessage(
+        content=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+    )
+    react_agent = create_react_agent(model, tools, prompt=cached_prompt)
 
     async def call_search_tools(state: ResearcherState) -> dict:
         result = await react_agent.ainvoke(

@@ -33,7 +33,15 @@ def build_enhancer_graph(use_own_checkpointer: bool = True):
 
     async def ask_or_complete(state: EnhancerState) -> dict:
         system_prompt = build_system_prompt(today=date.today().isoformat())
-        response = await model.ainvoke([SystemMessage(content=system_prompt)] + state["messages"])
+        # Cached: this text is identical across every turn of a conversation
+        # (it only changes once per calendar day), so every turn after the
+        # first reads it back at ~10% of normal input cost instead of paying
+        # full price to reprocess it each time. 5-minute TTL — see the
+        # conversation in git history for why not the 1-hour option.
+        system_message = SystemMessage(
+            content=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        )
+        response = await model.ainvoke([system_message] + state["messages"])
         parsed = parse_response(response)
         # Anthropic requires every tool_use block to be followed by a tool_result —
         # these two tools are structured-output-only and never actually execute, so

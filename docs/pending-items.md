@@ -2,6 +2,50 @@
 
 Things deliberately deferred during development, with the reasoning for revisiting later.
 
+## `create_react_agent` deprecation (Researcher)
+
+Not fixed. `langgraph.prebuilt.create_react_agent` (used in `researcher/graph.py`)
+logs a deprecation warning — it's moving to `langchain.agents.create_agent` in a
+future LangGraph version.
+
+**Why deferred**: still fully functional, not yet removed — no urgency.
+
+**Revisit when**: convenient, or if a future LangGraph upgrade actually removes it.
+
+## Planner prompt caching (currently skipped)
+
+Not implemented, unlike Enhancer/Researcher. Planner's system prompt is 532
+tokens — well under Anthropic's 1,024-token minimum for a cache breakpoint to
+activate at all (verified live: marking a too-short prompt with `cache_control`
+silently does nothing, no error).
+
+**Why deferred**: padding the prompt artificially just to clear the threshold
+would add real cost to every call (including the common case where Planner
+succeeds on its first attempt and never needs a second, cache-benefiting call)
+to chase a benefit that mostly wouldn't materialize.
+
+**Revisit when**: Planner's prompt naturally grows past ~1,024 tokens through
+future feature work (e.g. the Stays/Cars date-window formalization already
+logged above), or if its retry path turns out to fire more often than expected
+in practice.
+
+## Extend prompt caching to HITL / edit-classification / Booker
+
+Not implemented. Caching was scoped to Enhancer, Researcher, and (attempted,
+but skipped — see above) Planner, since those are the agents that can call the
+LLM multiple times per conversation. HITL classification, edit-feedback
+classification, and Booker's passenger-detail extraction are each normally
+called once per conversation, so there's no within-conversation reuse to
+benefit from (though cross-conversation reuse is still possible, since caching
+is workspace-scoped, not conversation-scoped).
+
+**Why deferred**: lower priority — the highest-value spots are done.
+
+**Revisit when**: real usage shows these being called more than once per
+conversation in practice (e.g. multiple edit-feedback rounds), or once there's
+enough concurrent usage that cross-conversation cache sharing becomes
+meaningful.
+
 ## Planner: "not consistent → re-invoke Researcher" escalation path
 
 Not built. Planner currently only retries within its own loop (re-picking from
