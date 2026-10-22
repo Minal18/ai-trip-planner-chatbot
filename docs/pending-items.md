@@ -2,18 +2,6 @@
 
 Things deliberately deferred during development, with the reasoning for revisiting later.
 
-## Recently completed (moved out of this list)
-
-- **Prompt caching (latency/cost reduction)** — Implemented for Enhancer and
-  Researcher (5-min TTL `cache_control` on each agent's system prompt). Planner
-  was deliberately skipped (prompt too short to clear the 1,024-token caching
-  minimum) and extending it to HITL/edit-classification/Booker was deliberately
-  skipped (each is normally called once per conversation) — both of those
-  remain tracked below as their own deferred items, since the reasoning for
-  skipping them still applies.
-- **Chat UI** — Implemented via Chainlit (`chatui/app.py`), replacing the
-  terminal REPL scripts as the interactive front end over the Supervisor graph.
-
 ## `create_react_agent` deprecation (Researcher)
 
 Not fixed. `langgraph.prebuilt.create_react_agent` (used in `researcher/graph.py`)
