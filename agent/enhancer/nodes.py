@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+VALID_DOMAINS = ("flights", "stays", "cars")
 
 
 class AskQuestion(BaseModel):
@@ -13,9 +17,15 @@ class RequestReady(BaseModel):
     summary: str = Field(
         description="A plain-language summary of the understood trip request, to show the traveler before proceeding."
     )
+    domains: list[Literal["flights", "stays", "cars"]] = Field(
+        description=(
+            "Which services the traveler confirmed they want: any non-empty combination of "
+            "\"flights\", \"stays\" (hotel), \"cars\" (rental car). This decides exactly what gets searched."
+        )
+    )
     request: dict = Field(
         description=(
-            "Structured fields, only including what's relevant to what the traveler asked for: "
+            "Structured fields for the domains listed in `domains` only: "
             "origin, destination, departure_date_earliest, departure_date_latest (equal to each other "
             "for an exact date), return_date (optional), adults, "
             "preferred_departure_time (morning/afternoon/evening/night/any, default \"any\"), "
@@ -24,6 +34,16 @@ class RequestReady(BaseModel):
             "driver_age, driver_residence_country_code (if a car is needed)."
         )
     )
+
+
+def _validate_domains(domains) -> list[str]:
+    """Pure/deterministic: dedupe while keeping order; reject empty or unknown values."""
+    if not domains:
+        raise ValueError("RequestReady must include at least one domain (flights/stays/cars).")
+    unknown = [d for d in domains if d not in VALID_DOMAINS]
+    if unknown:
+        raise ValueError(f"RequestReady contained unknown domain(s): {unknown}")
+    return list(dict.fromkeys(domains))
 
 
 def parse_response(response) -> dict:
@@ -38,9 +58,13 @@ def parse_response(response) -> dict:
 
     call = response.tool_calls[0]
     if call["name"] == "RequestReady":
+        domains = _validate_domains(call["args"].get("domains"))
+        # Stored on the request itself (not as separate state) so it travels with
+        # the request everywhere it already goes: Researcher, Planner, and the
+        # Supervisor's edit path, which rewrites the whole request dict.
         return {
             "complete": True,
-            "request": call["args"]["request"],
+            "request": {**call["args"]["request"], "domains": domains},
             "summary": call["args"]["summary"],
             "pending_question": None,
         }

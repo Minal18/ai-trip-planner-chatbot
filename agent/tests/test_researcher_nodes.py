@@ -118,6 +118,14 @@ def test_flag_insufficient_flags_errors_and_empty_results_only():
 def test_flag_insufficient_ignores_domains_never_requested():
     research_results = {"flights": {"status": "ok", "items": [{"id": "off_1"}]}}
     assert flag_insufficient(research_results) == []
+    assert flag_insufficient(research_results, requested_domains=["flights"]) == []
+
+
+def test_flag_insufficient_flags_requested_domains_that_were_never_searched():
+    # Traveler asked for all three, but the Researcher LLM only called search_flights.
+    research_results = {"flights": {"status": "ok", "items": [{"id": "off_1"}]}}
+    flagged = flag_insufficient(research_results, requested_domains=["flights", "stays", "cars"])
+    assert set(flagged) == {"stays", "cars"}
 
 
 def _flight(id_, departing_hour, minute="00", price="200.00"):

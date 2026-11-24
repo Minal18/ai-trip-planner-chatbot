@@ -44,7 +44,11 @@ async def build_researcher_graph():
         return {"research_results": rank_and_normalize(state["research_results"], preferred_departure_time=preferred)}
 
     def flag_node(state: ResearcherState) -> dict:
-        return {"insufficient_domains": flag_insufficient(state["research_results"])}
+        return {
+            "insufficient_domains": flag_insufficient(
+                state["research_results"], requested_domains=state["request"].get("domains")
+            )
+        }
 
     graph = StateGraph(ResearcherState)
     graph.add_node("call_search_tools", call_search_tools)

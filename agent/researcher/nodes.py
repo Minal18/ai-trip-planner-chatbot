@@ -139,9 +139,16 @@ def rank_and_normalize(research_results: dict, preferred_departure_time: str = "
     return ranked
 
 
-def flag_insufficient(research_results: dict) -> list[str]:
-    """Return the list of requested domains that failed or came back empty. Pure/deterministic."""
-    insufficient = []
+def flag_insufficient(research_results: dict, requested_domains: list[str] | None = None) -> list[str]:
+    """Return the list of requested domains that failed, came back empty, or were
+    never searched at all. Pure/deterministic.
+
+    requested_domains (the Enhancer's explicit `domains` list) is the backstop for
+    the Researcher LLM skipping a domain the traveler asked for: without it, a
+    never-called tool is indistinguishable from "not requested" and would be
+    silently dropped.
+    """
+    insufficient = [d for d in (requested_domains or []) if d not in research_results]
     for domain, result in research_results.items():
         if result.get("status") == "error":
             insufficient.append(domain)

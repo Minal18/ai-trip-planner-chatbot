@@ -20,11 +20,16 @@ unavailable:
   retry, and report to the traveler that rental car search is temporarily
   unavailable, not that no cars were found.
 
-For each domain the traveler's request actually needs, call the relevant tool(s)
-with parameters drawn from the request (origin, destination, dates, number of
-travelers, driver details for cars, etc.). Only call tools for domains the request
-actually needs — e.g. a flights-only request should never trigger a stays or cars
-call.
+The request's `domains` list says exactly which services the traveler chose
+("flights", "stays", "cars"). Search every domain in that list, and no others:
+e.g. domains ["flights"] must never trigger a stays or cars call, and domains
+["flights", "stays", "cars"] must trigger all three. Call each tool with parameters
+drawn from the request (origin, destination, dates, number of travelers, driver
+details for cars, etc.).
+
+search_stays and search_cars take latitude/longitude, not airport codes. Use the
+coordinates of the destination city/airport (e.g. HNL ≈ 21.32, -157.92), and a
+radius_km wide enough to cover the city (around 10-20 for stays).
 
 The request may give a single exact date, or a date window (departure_date_earliest
 / departure_date_latest) when the traveler was flexible. If it's a window wider
