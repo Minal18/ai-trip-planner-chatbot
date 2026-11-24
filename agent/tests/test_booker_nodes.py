@@ -3,7 +3,10 @@ from langchain_core.messages import AIMessage
 
 from booker.nodes import (
     booking_id_of,
+    describe_error,
     expected_traveler_count,
+    failed_domains,
+    format_booking_lines,
     flight_passengers,
     get_selected_items,
     parse_passenger_details,
@@ -125,3 +128,24 @@ def test_flight_passengers_one_entry_per_traveler_with_shared_contact():
         "phone_number": "+14155550123",
     }
     assert result[1]["given_name"] == "John" and result[1]["email"] == "jane@example.com"
+
+
+def test_describe_error_stale_offer_is_readable():
+    err = [{"code": "offer_no_longer_available", "source": "travelport", "message": "Please select another offer"}]
+    assert describe_error(err) == "the fare or rate is no longer available from the provider"
+
+
+def test_describe_error_other_provider_error_uses_message():
+    assert describe_error([{"code": "validation_length", "message": "Field 'passengers' should have 2 item(s)"}]) == (
+        "Field 'passengers' should have 2 item(s)"
+    )
+
+
+def test_describe_error_plain_string():
+    assert describe_error("Could not resolve a bookable rate.") == "Could not resolve a bookable rate."
+
+
+def test_failed_domains_and_format_booking_lines():
+    results = {"flight": {"error": "boom"}, "stay": {"booking_id": "ord_1", "reference": "REF1"}}
+    assert failed_domains(results) == ["flight"]
+    assert format_booking_lines(results) == ["- flight: didn't book — boom", "- hotel: confirmed, reference REF1"]

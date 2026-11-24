@@ -76,14 +76,23 @@ transatlantic: +1 day; Americas → India/Asia/Australia: often +2), but it's st
 a guess. Verified live against Duffel's test API: SEA → BOM departing Dec 10
 lands Dec 12 — the "+1 day" rule we first tried would have been off by a day.
 
-When the guess is wrong, Planner's `validate_consistency` catches the mismatch,
-retries once (which can't help, since every stay in `research_results` has the
-same dates), and the review card shows a ⚠️ warning line. The traveler then has
+Planner's `check_dates` now compares against the flight's real local arrival
+and return times, and tolerates arrivals that cross 1–2 days: a hotel that checks
+in on the departure day, or the night before an early-morning landing, counts as
+aligned; a car can't be picked up before landing; stay/car must end by the return
+flight (the day before is fine for a pre-dawn departure). Genuine conflicts are
+blocking problems (Planner retries once, often fixable by picking a different
+flight); merely wasteful cases (e.g. paying for a night before a long-haul lands)
+are ⚠️ notes on the review card and never trigger a retry.
+
+When the dates genuinely conflict and no flight fixes it, the retry can't help
+(every stay in `research_results` has the same dates), and the review card shows
+a ⚠️ warning line. The traveler then has
 to ask for the hotel dates to be shifted, which triggers a re-search via the
 edit path.
 
 **Why deferred**: it's a structural change to the Researcher. Today all searches
-run in one ReAct loop with no ordering; this needs flights searched first, then
+are requested in one LLM call and run concurrently, with no ordering; this needs flights searched first, then
 stays/cars searched from the chosen (or top-ranked) flight's actual
 `arriving_at` date, and the return flight's `departing_at` for check-out/drop-off.
 That also raises the question of which flight's dates to use when the Planner

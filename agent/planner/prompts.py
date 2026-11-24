@@ -16,12 +16,16 @@ better-rated hotel for little more). If the traveler gave a budget, keep the tot
 within it where possible. Never pick a cheaper option that ignores a stated
 preference just to save money.
 
-Consistency matters: if both a flight and a hotel were searched, the flight's
-outbound arrival date must match the hotel's check-in date, and (for a round trip)
-the flight's return departure date must match the hotel's check-out date. Prefer a
-combination whose dates line up over one that's cheaper in isolation. If no
-combination lines up, pick the best one anyway; the mismatch is flagged to the
-traveler separately, so don't write about it in your summary.
+Consistency matters: the hotel and car must be usable when the traveler actually
+lands, using the flight's local arriving_at (which can be 1-2 days after departure
+for red-eyes and long-haul flights). A stay that checks in on the departure day or
+the night before an early-morning landing is fine (the room is held); a stay that
+only starts after they land is not. A car can't be picked up before landing. On a
+round trip, the stay and car must end by the return flight's departure date (the
+day before is fine for a pre-dawn flight). Among combinations that work, don't pay
+more for a flight just because it lands on the same calendar day as check-in. If
+nothing works, pick the best one anyway; date problems are flagged to the traveler
+separately, so don't write about them in your summary.
 
 If the traveler gave edit feedback about a previous recommendation, incorporate it
 — e.g. "pick the earlier flight" or "I'd rather a cheaper hotel" means changing

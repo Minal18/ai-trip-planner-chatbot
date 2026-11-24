@@ -1,6 +1,7 @@
+import pytest
 from langchain_core.messages import AIMessage
 
-from supervisor.nodes import decide_next_step, parse_edit_classification
+from supervisor.nodes import confirmed_bookings, decide_next_step, parse_edit_classification, parse_retry_decision
 
 
 def test_routes_to_enhancer_when_no_request_yet():
@@ -115,3 +116,63 @@ def test_parse_edit_classification_raises_on_unexpected_tool():
 
     with pytest.raises(ValueError):
         parse_edit_classification(_ai_message_with_tool_call("SomethingElse", {}))
+
+
+FLIGHT_FAILED_STAY_OK = {
+    "request": {"origin": "SEA", "destination": "JFK", "adults": 1, "domains": ["flights", "stays"]},
+    "research_results": {"flights": {"status": "ok", "items": []}},
+    "itinerary": {"summary": "..."},
+    "itinerary_status": "approved",
+    "booking_result": {
+        "final_message": "...",
+        "passenger": {"travelers": [{"given_name": "Jane"}], "email": "j@example.com", "phone_number": "+1"},
+        "booking_results": {
+            "flight": {"error": [{"code": "offer_no_longer_available", "message": "Please select another offer"}]},
+            "stay": {"booking_id": "ord_1", "reference": "REF1"},
+        },
+    },
+}
+
+
+def _tool_call(name: str) -> AIMessage:
+    return AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": "call_1", "type": "tool_call"}])
+
+
+def test_routes_to_offer_retry_when_a_booking_failed():
+    assert decide_next_step(FLIGHT_FAILED_STAY_OK) == "offer_retry"
+
+
+def test_routes_to_done_when_traveler_declined_retry():
+    assert decide_next_step({**FLIGHT_FAILED_STAY_OK, "retry_declined": True}) == "done"
+
+
+def test_retry_resets_pipeline_slots_and_narrows_to_failed_domains():
+    update = parse_retry_decision(_tool_call("RetryFailedBookings"), FLIGHT_FAILED_STAY_OK)
+    for slot in ("research_results", "itinerary", "itinerary_status", "booking_result", "edit_feedback"):
+        assert update[slot] is None
+    assert update["request"]["domains"] == ["flights"]
+    assert update["request"]["origin"] == "SEA"  # rest of the request kept
+    # Carried across the reset: what booked, and who's travelling.
+    assert update["confirmed_bookings"] == {"stay": {"booking_id": "ord_1", "reference": "REF1"}}
+    assert update["passenger"]["email"] == "j@example.com"
+    # And the router cascades back to a fresh search.
+    assert decide_next_step({**FLIGHT_FAILED_STAY_OK, **update}) == "researcher"
+
+
+def test_keep_as_is_records_decline_and_confirmed_bookings():
+    update = parse_retry_decision(_tool_call("KeepAsIs"), FLIGHT_FAILED_STAY_OK)
+    assert update["retry_declined"] is True
+    assert "stay" in update["confirmed_bookings"]
+
+
+def test_parse_retry_decision_raises_on_unexpected_tool():
+    with pytest.raises(ValueError):
+        parse_retry_decision(_tool_call("Approve"), FLIGHT_FAILED_STAY_OK)
+
+
+def test_confirmed_bookings_merges_earlier_and_latest_successes():
+    state = {
+        "confirmed_bookings": {"stay": {"booking_id": "ord_1"}},
+        "booking_result": {"booking_results": {"flight": {"order_id": "ord_2"}, "car": {"error": "x"}}},
+    }
+    assert set(confirmed_bookings(state)) == {"stay", "flight"}

@@ -127,3 +127,36 @@ def reference_of(result: dict):
     """Pure: flights' book_flight returns booking_reference; stays/cars' book_*
     return reference — this normalizes the lookup so callers don't need to know which."""
     return result.get("reference") or result.get("booking_reference")
+
+
+# Provider error codes that mean "these exact search results are stale — search again".
+STALE_RESULT_CODES = {"offer_no_longer_available", "offer_expired", "rate_unavailable", "rate_expired"}
+DOMAIN_LABELS = {"flight": "flight", "stay": "hotel", "car": "rental car"}
+
+
+def describe_error(error) -> str:
+    """Pure: turn a book_* tool's error payload (a provider error list, or a plain
+    string from our own validation) into one short, readable sentence."""
+    if isinstance(error, list) and error and isinstance(error[0], dict):
+        first = error[0]
+        if first.get("code") in STALE_RESULT_CODES:
+            return "the fare or rate is no longer available from the provider"
+        return first.get("message") or first.get("title") or str(first)
+    return str(error)
+
+
+def failed_domains(results: dict) -> list[str]:
+    """Pure: which booking domains (flight/stay/car) failed in a booking attempt."""
+    return [d for d, r in (results or {}).items() if "error" in r]
+
+
+def format_booking_lines(results: dict) -> list[str]:
+    """Pure: one line per booking domain, confirmed or failed."""
+    lines = []
+    for domain, r in results.items():
+        label = DOMAIN_LABELS.get(domain, domain)
+        if "error" in r:
+            lines.append(f"- {label}: didn't book — {describe_error(r['error'])}")
+        else:
+            lines.append(f"- {label}: confirmed, reference {reference_of(r) or booking_id_of(r)}")
+    return lines

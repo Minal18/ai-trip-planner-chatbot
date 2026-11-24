@@ -1,5 +1,10 @@
 from pydantic import BaseModel, Field
 
+from booker.nodes import failed_domains
+
+# Booker reports flight/stay/car; the request's `domains` list says flights/stays/cars.
+BOOKING_TO_REQUEST_DOMAIN = {"flight": "flights", "stay": "stays", "car": "cars"}
+
 
 def decide_next_step(state: dict) -> str:
     """Pure/deterministic router — no LLM needed for these transitions, since each
@@ -18,7 +23,13 @@ def decide_next_step(state: dict) -> str:
         return "classify_edit_feedback"
     if state.get("itinerary_status") == "approved" and state.get("booking_result") is None:
         return "booker"
-    return "done"  # rejected, or approved-and-booked
+    if (
+        state.get("booking_result")
+        and failed_domains(state["booking_result"].get("booking_results"))
+        and not state.get("retry_declined")
+    ):
+        return "offer_retry"
+    return "done"  # rejected, approved-and-booked, or a failed piece the traveler chose to leave
 
 
 class NeedsEnhancer(BaseModel):
@@ -80,3 +91,59 @@ def parse_edit_classification(response) -> dict:
         return {"itinerary": None, "itinerary_status": None}
     else:
         raise ValueError(f"Unexpected tool call from edit classification: {call['name']}")
+
+
+class RetryFailedBookings(BaseModel):
+    """The traveler wants to try again for the part(s) that didn't book (e.g. "yes",
+    "retry", "search again", "try another flight")."""
+
+
+class KeepAsIs(BaseModel):
+    """The traveler doesn't want to retry the failed part(s) — keep what's confirmed
+    and stop (e.g. "no", "leave it", "I'll book the flight myself")."""
+
+
+def confirmed_bookings(state: dict) -> dict:
+    """Pure: every booking confirmed so far — from earlier attempts plus the latest one."""
+    latest = ((state.get("booking_result") or {}).get("booking_results")) or {}
+    return {
+        **(state.get("confirmed_bookings") or {}),
+        **{d: r for d, r in latest.items() if "error" not in r},
+    }
+
+
+def parse_retry_decision(response, state: dict) -> dict:
+    """Pure/deterministic: turn the retry classifier's forced tool call into a state
+    update.
+
+    Retry uses the same reset-and-cascade pattern as parse_edit_classification:
+    clear research_results/itinerary/itinerary_status/booking_result back to None
+    so decide_next_step walks Researcher -> Planner -> review -> Booker again — a
+    fresh search, since a provider's "no longer available" means the old results
+    are stale and retrying the same offer id can only fail again. The request is
+    narrowed to just the failed domains. Deliberately carried across the reset:
+    what already booked (confirmed_bookings — never cancelled, never rebooked; see
+    docs/architecture.md §7.6) and the passenger details (not asked for twice).
+    """
+    if not response.tool_calls or len(response.tool_calls) != 1:
+        raise ValueError(f"Expected exactly one retry-decision tool call, got {len(response.tool_calls or [])}")
+    call = response.tool_calls[0]
+    confirmed = confirmed_bookings(state)
+
+    if call["name"] == "KeepAsIs":
+        return {"retry_declined": True, "confirmed_bookings": confirmed}
+    if call["name"] != "RetryFailedBookings":
+        raise ValueError(f"Unexpected tool call: {call['name']}")
+
+    failed = failed_domains(state["booking_result"]["booking_results"])
+    return {
+        "request": {**state["request"], "domains": [BOOKING_TO_REQUEST_DOMAIN[d] for d in failed]},
+        "research_results": None,
+        "insufficient_domains": None,
+        "itinerary": None,
+        "itinerary_status": None,
+        "edit_feedback": None,
+        "booking_result": None,
+        "confirmed_bookings": confirmed,
+        "passenger": state["booking_result"].get("passenger"),
+    }

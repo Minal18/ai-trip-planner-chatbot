@@ -348,6 +348,18 @@ finding them unnecessary in practice:
   Booker reports per-domain results and invites the traveler to retry just the
   failed piece.
 
+**Retrying a failed piece.** After a partial failure the Supervisor's
+`offer_retry` node lists what booked and what didn't, and asks whether to search
+again for the failed part (one small forced-tool-call classifies the reply:
+`RetryFailedBookings` / `KeepAsIs`). A retry uses the same reset-and-cascade
+pattern as edit classification: it clears `research_results`, `itinerary`,
+`itinerary_status`, and `booking_result`, and narrows the request's `domains` to
+the failed ones, so the router walks Researcher → Planner → review → Booker again
+with **fresh** results (retrying the same offer id after "no longer available"
+can only fail again). Two things deliberately survive the reset:
+`confirmed_bookings` (Booker skips those domains, so nothing is booked twice) and
+`passenger` (the travelers aren't asked for their details again).
+
 ## 8. MVP definition of done
 
 - Supervisor correctly routes between Enhancer → Researcher → Planner → Human-in-the-

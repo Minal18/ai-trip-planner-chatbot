@@ -9,13 +9,12 @@ from langgraph.types import interrupt
 from booker.mcp_tools import load_booker_tools
 from booker.nodes import (
     PassengerDetails,
-    booking_id_of,
     expected_traveler_count,
     flight_passengers,
+    format_booking_lines,
     get_selected_items,
     parse_passenger_details,
     parse_tool_output,
-    reference_of,
     traveler_count_problem,
 )
 from booker.prompts import PASSENGER_EXTRACTION_PROMPT
@@ -26,6 +25,9 @@ class BookerState(TypedDict):
     research_results: dict
     request: Optional[dict]
     passenger: Optional[dict]
+    # Domains already booked in an earlier attempt (a retry after a partial
+    # failure) — never booked again, so a retry can't double-book.
+    already_booked: Optional[dict]
     resolved_stay_rate_id: Optional[str]
     booking_results: Optional[dict]
     final_message: Optional[str]
@@ -41,6 +43,11 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
     async def collect_passenger_details(state: BookerState) -> dict:
         selected_flight = get_selected_items(state["itinerary"], state["research_results"])["flight"]
         expected = expected_traveler_count(state.get("request"), selected_flight)
+        # On a retry the traveler already gave everyone's details — reuse them
+        # rather than asking again, as long as they still cover every traveler.
+        known = state.get("passenger")
+        if known and traveler_count_problem(known, expected) is None:
+            return {}
         if expected == 1:
             question = (
                 "To book this, I need your full legal name, email, phone number, "
@@ -91,13 +98,14 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
 
     async def book(state: BookerState) -> dict:
         itinerary = state["itinerary"]
+        already = state.get("already_booked") or {}
         details = state["passenger"]
         # Stays and cars are booked under the lead traveler (one guest name /
         # one driver), with the booking's shared contact details.
         p = {**details["travelers"][0], "email": details["email"], "phone_number": details["phone_number"]}
         results = {}
 
-        if itinerary.get("selected_flight_id"):
+        if itinerary.get("selected_flight_id") and "flight" not in already:
             result = parse_tool_output(
                 await tools["book_flight"].ainvoke(
                     {
@@ -108,7 +116,7 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
             )
             results["flight"] = result
 
-        if itinerary.get("selected_stay_id"):
+        if itinerary.get("selected_stay_id") and "stay" not in already:
             if not state.get("resolved_stay_rate_id"):
                 results["stay"] = {"error": "Could not resolve a bookable rate for the selected stay."}
             else:
@@ -125,7 +133,7 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
                 )
                 results["stay"] = result
 
-        if itinerary.get("selected_car_id"):
+        if itinerary.get("selected_car_id") and "car" not in already:
             result = parse_tool_output(
                 await tools["book_car"].ainvoke(
                     {
@@ -143,23 +151,13 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
         return {"booking_results": results}
 
     def compile_result(state: BookerState) -> dict:
+        # Each booking is independent — a failure here doesn't cancel what
+        # succeeded elsewhere. Offering a fresh search for just the failed piece
+        # is the Supervisor's job (offer_retry), so no call to action here.
         results = state.get("booking_results") or {}
         if not results:
             return {"final_message": "Nothing was booked."}
-
-        failed = [d for d, r in results.items() if "error" in r]
-        lines = []
-        for domain, r in results.items():
-            if "error" in r:
-                lines.append(f"- {domain}: FAILED ({r['error']})")
-            else:
-                lines.append(f"- {domain}: confirmed, reference {reference_of(r) or booking_id_of(r)}")
-        if failed:
-            # Each booking is independent — a failure here doesn't cancel what
-            # succeeded elsewhere. The traveler keeps whatever worked and can
-            # retry just the failed piece.
-            lines.append(f"\n{', '.join(failed)} didn't book — let me know if you'd like to retry just that part.")
-        return {"final_message": "\n".join(lines)}
+        return {"final_message": "\n".join(format_booking_lines(results))}
 
     graph = StateGraph(BookerState)
     graph.add_node("collect_passenger_details", collect_passenger_details)

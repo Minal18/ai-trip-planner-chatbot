@@ -19,3 +19,18 @@ decide which part of the system needs to handle their feedback:
 You'll be given the traveler's feedback, the current request, and the research
 results already gathered. Call exactly one of the three tools.
 """
+
+
+RETRY_DECISION_PROMPT = """\
+A booking attempt partly failed, and the traveler was asked whether to search
+again for the part(s) that didn't book. Read their reply and call exactly one tool:
+
+- RetryFailedBookings: they want to try again (e.g. "yes", "retry", "search
+  again", "find me another flight", "go ahead").
+- KeepAsIs: they don't want to retry — keep what's confirmed and stop (e.g. "no",
+  "leave it", "that's fine, I'll sort the flight myself").
+
+If the reply is ambiguous, prefer RetryFailedBookings: retrying only searches and
+shows new options for review — nothing is booked without their approval.
+"""
+

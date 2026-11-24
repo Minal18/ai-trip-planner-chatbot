@@ -9,19 +9,30 @@ from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
 from booker.graph import build_booker_graph
+from booker.nodes import DOMAIN_LABELS, failed_domains, format_booking_lines
 from enhancer.graph import build_enhancer_graph
 from hitl.nodes import Approve, RequestEdits, Reject, format_itinerary_for_review, parse_response as parse_hitl_response
 from hitl.prompts import SYSTEM_PROMPT as HITL_SYSTEM_PROMPT
 from planner.graph import build_planner_graph
 from researcher.graph import build_researcher_graph
 from supervisor.nodes import (
+    KeepAsIs,
     NeedsEnhancer,
     NeedsPlanner,
     NeedsResearcher,
+    RetryFailedBookings,
+    confirmed_bookings,
     decide_next_step,
     parse_edit_classification,
+    parse_retry_decision,
 )
-from supervisor.prompts import EDIT_CLASSIFICATION_PROMPT
+from supervisor.prompts import EDIT_CLASSIFICATION_PROMPT, RETRY_DECISION_PROMPT
+
+BOOKING_ORDER = ("flight", "stay", "car")
+
+
+def _join(labels: list[str]) -> str:
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
 
 
 class SupervisorState(TypedDict):
@@ -34,6 +45,11 @@ class SupervisorState(TypedDict):
     itinerary_status: Optional[str]
     edit_feedback: Optional[str]
     booking_result: Optional[dict]
+    # Survive a retry's reset (see parse_retry_decision): what's already booked,
+    # and the travelers' details so they aren't asked for twice.
+    confirmed_bookings: Optional[dict]
+    passenger: Optional[dict]
+    retry_declined: Optional[bool]
 
 
 async def build_supervisor_graph():
@@ -45,6 +61,7 @@ async def build_supervisor_graph():
     edit_classifier_model = ChatAnthropic(model="claude-sonnet-5").bind_tools(
         [NeedsEnhancer, NeedsResearcher, NeedsPlanner], tool_choice="any"
     )
+    retry_model = ChatAnthropic(model="claude-sonnet-5").bind_tools([RetryFailedBookings, KeepAsIs], tool_choice="any")
 
     async def run_enhancer(state: SupervisorState) -> dict:
         result = await enhancer_graph.ainvoke({"messages": state["messages"]})
@@ -93,15 +110,41 @@ async def build_supervisor_graph():
                 "itinerary": state["itinerary"],
                 "research_results": state["research_results"],
                 "request": state["request"],
+                "passenger": state.get("passenger"),
+                "already_booked": state.get("confirmed_bookings"),
             }
         )
         return {"booking_result": result}
 
+    def _all_booking_lines(state: SupervisorState) -> list[str]:
+        """Everything confirmed so far (this attempt and earlier ones) plus this
+        attempt's failures, in a stable flight/hotel/car order."""
+        latest = (state.get("booking_result") or {}).get("booking_results") or {}
+        merged = {**{d: r for d, r in latest.items() if "error" in r}, **confirmed_bookings(state)}
+        return format_booking_lines({d: merged[d] for d in BOOKING_ORDER if d in merged})
+
+    async def offer_retry(state: SupervisorState) -> dict:
+        failed = failed_domains(state["booking_result"]["booking_results"])
+        labels = _join([DOMAIN_LABELS[d] for d in failed])
+        question = "\n".join(_all_booking_lines(state)) + (
+            f"\n\nWant me to search for fresh {labels} options and try again? "
+            "You'll review the new pick before anything is booked"
+        )
+        if confirmed_bookings(state):
+            question += ", and what's already confirmed stays booked."
+        else:
+            question += "."
+        reply = interrupt({"question": question})
+        response = await retry_model.ainvoke(
+            [SystemMessage(content=RETRY_DECISION_PROMPT), HumanMessage(content=reply)]
+        )
+        return {**parse_retry_decision(response, state), "messages": [HumanMessage(content=reply)]}
+
     def announce_outcome(state: SupervisorState) -> dict:
         if state["itinerary_status"] == "rejected":
             text = "No problem — let me know if you'd like to start planning a different trip."
-        else:  # approved and booked (or attempted)
-            text = state["booking_result"]["final_message"]
+        else:  # approved and booked (or attempted, and the traveler chose not to retry)
+            text = "\n".join(_all_booking_lines(state)) or "Nothing was booked."
         return {"messages": [AIMessage(content=text)]}
 
     graph = StateGraph(SupervisorState)
@@ -111,6 +154,7 @@ async def build_supervisor_graph():
     graph.add_node("human_review", run_human_review)
     graph.add_node("classify_edit_feedback", classify_edit_feedback)
     graph.add_node("booker", run_booker)
+    graph.add_node("offer_retry", offer_retry)
     graph.add_node("announce_outcome", announce_outcome)
 
     route_map = {
@@ -120,6 +164,7 @@ async def build_supervisor_graph():
         "human_review": "human_review",
         "classify_edit_feedback": "classify_edit_feedback",
         "booker": "booker",
+        "offer_retry": "offer_retry",
         "done": "announce_outcome",
     }
     graph.add_conditional_edges(START, decide_next_step, route_map)
@@ -129,6 +174,7 @@ async def build_supervisor_graph():
     graph.add_conditional_edges("human_review", decide_next_step, route_map)
     graph.add_conditional_edges("classify_edit_feedback", decide_next_step, route_map)
     graph.add_conditional_edges("booker", decide_next_step, route_map)
+    graph.add_conditional_edges("offer_retry", decide_next_step, route_map)
     graph.add_edge("announce_outcome", END)
 
     return graph.compile(checkpointer=MemorySaver())

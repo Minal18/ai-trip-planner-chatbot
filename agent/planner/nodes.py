@@ -1,3 +1,4 @@
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -54,41 +55,136 @@ def _find_item(research_results: dict, domain: str, id_field: str, id_value):
     return None
 
 
+# A flight landing before this hour still needs a room the night before (a red-eye
+# landing at 03:19 needs the bed held from the previous night's check-in), and a
+# return departing before EARLY_DEPARTURE_HOUR means leaving the hotel/car the evening before.
+NEEDS_PRIOR_NIGHT_BEFORE_HOUR = 12
+EARLY_DEPARTURE_HOUR = 6
+
+
+def _dt(value: str) -> datetime:
+    # Duffel gives local times without an offset ("2026-12-26T03:19:00"); stay/car
+    # dates are local to the destination too, so naive local comparison is right.
+    return datetime.fromisoformat(value[:19])
+
+
+def _d(value: str) -> date:
+    return date.fromisoformat(value[:10])
+
+
+def _fmt(d: date) -> str:
+    return d.strftime("%-d %b")
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def check_dates(itinerary: dict, research_results: dict) -> tuple[list[str], list[str]]:
+    """Pure/deterministic: compare the selected stay/car dates with the flight's
+    actual (local) arrival and return-departure times.
+
+    Returns (problems, notes). Problems are real conflicts — no room or car when
+    you land, a stay/car that runs past your return flight — which the Planner
+    retries on (often a different flight fixes it). Notes are workable but worth
+    telling the traveler (e.g. paying for a night before a long-haul flight lands);
+    they never trigger a retry, since re-picking can't change searched dates.
+
+    Arrival can cross 1-2 days (red-eyes, long-haul): a stay is aligned anywhere
+    from the night before an early-morning landing through the landing date.
+    """
+    problems: list[str] = []
+    notes: list[str] = []
+    flight = _find_item(research_results, "flights", "id", itinerary.get("selected_flight_id"))
+    if not flight or not flight.get("slices"):
+        return problems, notes
+    stay = _find_item(research_results, "stays", "search_result_id", itinerary.get("selected_stay_id"))
+    car = _find_item(research_results, "cars", "rate_id", itinerary.get("selected_car_id"))
+
+    departs = _dt(flight["slices"][0]["departing_at"])
+    lands = _dt(flight["slices"][0]["arriving_at"])
+    first_night = lands.date() - timedelta(days=1) if lands.hour < NEEDS_PRIOR_NIGHT_BEFORE_HOUR else lands.date()
+    landing = f"you land {_fmt(lands.date())} at {lands:%H:%M}"
+    if lands.date() > departs.date():
+        landing += f" ({_plural((lands.date() - departs.date()).days, 'day')} after departing)"
+
+    returns = _dt(flight["slices"][-1]["departing_at"]) if len(flight["slices"]) > 1 else None
+    # The last day you still need the room/car: an early-morning return means
+    # you leave the evening before, so either that day or the day before is fine.
+    leave_by = returns.date() if returns else None
+    leave_from = (
+        returns.date() - timedelta(days=1) if returns and returns.hour < EARLY_DEPARTURE_HOUR else leave_by
+    )
+
+    if stay:
+        check_in, check_out = _d(stay["check_in_date"]), _d(stay["check_out_date"])
+        if check_in > lands.date():
+            problems.append(
+                f"{landing} but the stay only starts {_fmt(check_in)} — no room for your first "
+                f"{_plural((check_in - lands.date()).days, 'night')}"
+            )
+        elif check_in < departs.date():
+            problems.append(f"the stay starts {_fmt(check_in)}, before your flight departs {_fmt(departs.date())}")
+        elif check_in < first_night:
+            notes.append(
+                f"Hotel check-in is {_fmt(check_in)} but {landing} — you'll pay for "
+                f"{_plural((first_night - check_in).days, 'night')} before you arrive."
+            )
+        if returns:
+            if check_out > leave_by:
+                problems.append(
+                    f"the stay checks out {_fmt(check_out)}, after your return flight leaves {_fmt(leave_by)}"
+                )
+            elif check_out < leave_from:
+                problems.append(
+                    f"the stay checks out {_fmt(check_out)} but your return flight leaves "
+                    f"{_fmt(returns.date())} at {returns:%H:%M} — no room for the last "
+                    f"{_plural((leave_from - check_out).days, 'night')}"
+                )
+
+    if car:
+        pickup, dropoff = _d(car["pickup_date"]), _d(car["dropoff_date"])
+        if pickup < lands.date():
+            # Can't collect a car before landing; agencies may cancel it as a no-show.
+            problems.append(
+                f"car pickup is {_fmt(pickup)} but {landing} — the rental could be cancelled as a no-show "
+                f"(pickup should be {_fmt(lands.date())})"
+            )
+        elif pickup > lands.date():
+            notes.append(
+                f"Car pickup is {_fmt(pickup)}, {_plural((pickup - lands.date()).days, 'day')} after you land."
+            )
+        if returns:
+            if dropoff > leave_by:
+                problems.append(
+                    f"the car is due back {_fmt(dropoff)}, after your return flight leaves {_fmt(leave_by)}"
+                )
+            elif dropoff < leave_from:
+                notes.append(
+                    f"The car is due back {_fmt(dropoff)}, {_plural((leave_from - dropoff).days, 'day')} "
+                    f"before your return flight."
+                )
+
+    return problems, notes
+
+
 def validate_consistency(itinerary: dict, research_results: dict) -> list[str]:
     """Pure/deterministic: check the proposed itinerary against research_results.
 
-    Two kinds of checks: every selected id must actually exist in the data (catches
-    hallucination), and where both a flight and a stay were selected, their dates
-    must actually line up. Cars aren't date-checked against flights yet (see
-    docs/pending-items.md).
+    Every selected id must actually exist in the data (catches hallucination), and
+    the stay/car dates must work with the flight's real arrival/return times (see
+    check_dates — only its blocking problems are returned here).
     """
     problems = []
+    for key, domain, id_field in (
+        ("selected_flight_id", "flights", "id"),
+        ("selected_stay_id", "stays", "search_result_id"),
+        ("selected_car_id", "cars", "rate_id"),
+    ):
+        if itinerary.get(key) and _find_item(research_results, domain, id_field, itinerary[key]) is None:
+            problems.append(f"{key} {itinerary[key]!r} does not exist in research_results")
 
-    flight = _find_item(research_results, "flights", "id", itinerary.get("selected_flight_id"))
-    if itinerary.get("selected_flight_id") and flight is None:
-        problems.append(f"selected_flight_id {itinerary['selected_flight_id']!r} does not exist in research_results")
-
-    stay = _find_item(research_results, "stays", "search_result_id", itinerary.get("selected_stay_id"))
-    if itinerary.get("selected_stay_id") and stay is None:
-        problems.append(f"selected_stay_id {itinerary['selected_stay_id']!r} does not exist in research_results")
-
-    car = _find_item(research_results, "cars", "rate_id", itinerary.get("selected_car_id"))
-    if itinerary.get("selected_car_id") and car is None:
-        problems.append(f"selected_car_id {itinerary['selected_car_id']!r} does not exist in research_results")
-
-    if flight and stay:
-        outbound_arrival = flight["slices"][0]["arriving_at"][:10]
-        if outbound_arrival != stay["check_in_date"]:
-            problems.append(
-                f"flight arrives {outbound_arrival} but stay checks in {stay['check_in_date']} — dates don't align"
-            )
-        if len(flight["slices"]) > 1:
-            return_departure = flight["slices"][-1]["departing_at"][:10]
-            if return_departure != stay["check_out_date"]:
-                problems.append(
-                    f"flight returns {return_departure} but stay checks out {stay['check_out_date']} — dates don't align"
-                )
-
+    problems.extend(check_dates(itinerary, research_results)[0])
     return problems
 
 
