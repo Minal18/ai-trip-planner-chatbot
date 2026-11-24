@@ -194,3 +194,48 @@ def test_rank_and_normalize_ignores_time_preference_for_non_flight_domains():
     # A "morning" preference is flights-only — stays should still be pure price sort.
     ranked = rank_and_normalize(research_results, preferred_departure_time="morning")
     assert ranked["stays"]["items"][0]["search_result_id"] == "sr_2"
+
+
+def _stay(id_, rating, price):
+    return {"search_result_id": id_, "rating": rating, "cheapest_rate_total_amount": price}
+
+
+def _car(id_, vehicle, price):
+    return {"rate_id": id_, "vehicle": vehicle, "total_amount": price}
+
+
+def _flight_with_stops(id_, stops, price):
+    return {"id": id_, "total_amount": price, "slices": [{"departing_at": "2026-11-15T10:00:00", "stops": stops}]}
+
+
+def test_rank_luxury_stays_survive_top_n_cut_and_best_rated_comes_first():
+    stays = [_stay(f"cheap_{i}", 3.2, f"{100 + i}.00") for i in range(6)] + [
+        _stay("lux_a", 4.5, "900.00"),
+        _stay("lux_b", 4.8, "1200.00"),
+    ]
+    ranked = rank_and_normalize({"stays": {"status": "ok", "items": stays}}, top_n=5, preferences={"stay_tier": "luxury"})
+    ids = [s["search_result_id"] for s in ranked["stays"]["items"]]
+    assert ids[:2] == ["lux_b", "lux_a"]  # with pure price sort, both would have been cut
+
+
+def test_rank_car_class_matches_first_and_compact_suv_is_not_compact():
+    cars = [
+        _car("econ", "Economy", "100.00"),
+        _car("csuv", "Compact SUV", "150.00"),
+        _car("comp", "Compact", "180.00"),
+    ]
+    ranked = rank_and_normalize({"cars": {"status": "ok", "items": cars}}, preferences={"car_class": "compact"})
+    assert [c["rate_id"] for c in ranked["cars"]["items"]] == ["comp", "econ", "csuv"]
+
+
+def test_rank_flights_within_stop_limit_come_first_even_if_pricier():
+    flights = [_flight_with_stops("two_stop", 2, "500.00"), _flight_with_stops("one_stop", 1, "800.00")]
+    ranked = rank_and_normalize({"flights": {"status": "ok", "items": flights}}, preferences={"flight_max_stops": 1})
+    assert [f["id"] for f in ranked["flights"]["items"]] == ["one_stop", "two_stop"]
+
+
+def test_rank_with_default_preferences_is_cheapest_first():
+    stays = [_stay("a", 4.8, "300.00"), _stay("b", 3.0, "100.00")]
+    defaults = {"stay_tier": "any", "car_class": "any", "flight_max_stops": None}
+    ranked = rank_and_normalize({"stays": {"status": "ok", "items": stays}}, preferences=defaults)
+    assert [s["search_result_id"] for s in ranked["stays"]["items"]] == ["b", "a"]

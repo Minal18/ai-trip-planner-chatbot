@@ -65,3 +65,38 @@ as the one LLM-judged exception.
 
 **Revisit when**: good candidate to pair with the chat UI work, or whenever the
 project needs onboarding/portfolio-ready documentation.
+
+## Hotel check-in / car pickup derived from the actual flight arrival
+
+Not built. When a trip includes a flight plus a hotel and/or car, the hotel
+check-in and car pickup dates are set by the Enhancer *before* any flight has been
+searched, so they're an estimate of the arrival date. The Enhancer prompt now
+tells it that long-haul flights land later than people expect (overnight
+transatlantic: +1 day; Americas → India/Asia/Australia: often +2), but it's still
+a guess. Verified live against Duffel's test API: SEA → BOM departing Dec 10
+lands Dec 12 — the "+1 day" rule we first tried would have been off by a day.
+
+When the guess is wrong, Planner's `validate_consistency` catches the mismatch,
+retries once (which can't help, since every stay in `research_results` has the
+same dates), and the review card shows a ⚠️ warning line. The traveler then has
+to ask for the hotel dates to be shifted, which triggers a re-search via the
+edit path.
+
+**Why deferred**: it's a structural change to the Researcher. Today all searches
+run in one ReAct loop with no ordering; this needs flights searched first, then
+stays/cars searched from the chosen (or top-ranked) flight's actual
+`arriving_at` date, and the return flight's `departing_at` for check-out/drop-off.
+That also raises the question of which flight's dates to use when the Planner
+later picks a different one.
+
+**Possible approach**: split the Researcher into two phases (flights, then
+stays/cars) when `domains` includes flights plus anything else; derive
+check-in/pickup from the top-ranked flight's arrival, and have the Planner
+re-trigger the stays/cars search (via the existing NeedsResearcher edit path)
+if it selects a flight with different dates. Also add a car-vs-flight date check
+to `validate_consistency` — car results now carry `pickup_date`/`dropoff_date`,
+so the old "cars carry no dates" gap no longer blocks it.
+
+**Revisit when**: after the current preferences / review-card changes are
+tested from the UI, or sooner if date-mismatch warnings show up on most
+long-haul trips.

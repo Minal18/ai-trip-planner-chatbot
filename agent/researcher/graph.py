@@ -41,7 +41,13 @@ async def build_researcher_graph():
 
     def rank_node(state: ResearcherState) -> dict:
         preferred = state["request"].get("preferred_departure_time", "any")
-        return {"research_results": rank_and_normalize(state["research_results"], preferred_departure_time=preferred)}
+        return {
+            "research_results": rank_and_normalize(
+                state["research_results"],
+                preferred_departure_time=preferred,
+                preferences=state["request"].get("preferences"),
+            )
+        }
 
     def flag_node(state: ResearcherState) -> dict:
         return {

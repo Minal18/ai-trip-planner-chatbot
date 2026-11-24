@@ -5,7 +5,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
-from planner.nodes import ProposeItinerary, parse_response, validate_consistency
+from planner.nodes import ProposeItinerary, compute_total, parse_response, validate_consistency
 from planner.prompts import SYSTEM_PROMPT
 
 
@@ -41,6 +41,13 @@ def build_planner_graph():
         response = await model.ainvoke([SystemMessage(content=SYSTEM_PROMPT)] + messages)
         itinerary = parse_response(response)
         problems = validate_consistency(itinerary, state["research_results"])
+        itinerary = {
+            **itinerary,
+            "total_price": compute_total(itinerary, state["research_results"]),
+            # If the retry still can't fix these, they're shown to the traveler as
+            # a short warning line rather than buried in the summary.
+            "warnings": problems,
+        }
 
         return {
             "itinerary": itinerary,

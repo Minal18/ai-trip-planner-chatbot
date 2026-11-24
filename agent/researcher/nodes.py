@@ -112,28 +112,106 @@ def _matches_preferred_time(item: dict, preferred: str) -> bool:
     return _time_band(hour) == preferred
 
 
-def rank_and_normalize(research_results: dict, preferred_departure_time: str = "any", top_n: int = 5) -> dict:
-    """Sort each domain's items and trim to the top N. Pure/deterministic.
+# Hotel tier by rating. Duffel ratings are 1-5; thresholds chosen so each tier
+# keeps a meaningful share of a typical result set.
+STAY_TIER_RATING = {
+    "budget": (0.0, 3.5),
+    "midrange": (3.5, 4.3),
+    "luxury": (4.3, 5.01),
+}
 
-    For flights, if the traveler stated a preferred departure time band (not
-    "any"), offers matching that band are prioritized first (still sorted by
-    price within each group) — a soft priority, not a hard filter, so a much
-    cheaper option outside the preferred band is never hidden entirely.
+# Car class -> keywords matched against the vehicle name (lower-cased).
+# Order matters for "compact": a "Compact SUV" is an SUV, not a compact.
+CAR_CLASS_KEYWORDS = {
+    "economy": ("economy", "subcompact"),
+    "compact": ("compact",),
+    "midsize": ("midsize", "mid-size", "intermediate"),
+    "fullsize": ("full-size", "fullsize", "full size", "standard"),
+    "suv": ("suv",),
+    "minivan": ("minivan", "van"),
+    "premium": ("premium", "luxury", "convertible"),
+}
+
+
+def _max_stops(item: dict) -> int:
+    return max((s.get("stops", 0) for s in item.get("slices", [])), default=0)
+
+
+def _stay_matches_tier(item: dict, tier: str) -> bool:
+    low, high = STAY_TIER_RATING[tier]
+    rating = item.get("rating")
+    return rating is not None and low <= float(rating) < high
+
+
+def _car_matches_class(item: dict, car_class: str) -> bool:
+    name = (item.get("vehicle") or "").lower()
+    if car_class in ("compact", "economy") and "suv" in name:
+        return False
+    if car_class == "economy" and "compact" in name and "subcompact" not in name:
+        return False
+    return any(k in name for k in CAR_CLASS_KEYWORDS[car_class])
+
+
+def _sort_key(domain: str, preferences: dict, preferred_departure_time: str):
+    """Build the sort key for one domain. Preference matches always sort first, so
+    they survive the top-N cut; within a group, cheapest first, except luxury
+    hotels, where the best-rated comes first."""
+    if domain == "flights":
+        max_stops = preferences.get("flight_max_stops")
+
+        def key(item):
+            return (
+                0 if max_stops is None or _max_stops(item) <= max_stops else 1,
+                0 if preferred_departure_time not in TIME_BANDS
+                or _matches_preferred_time(item, preferred_departure_time) else 1,
+                _price_of(item),
+            )
+
+        return key
+
+    if domain == "stays":
+        tier = preferences.get("stay_tier", "any")
+        if tier not in STAY_TIER_RATING:
+            return _price_of
+
+        def key(item):
+            rating_first = -(float(item.get("rating") or 0)) if tier == "luxury" else 0
+            return (0 if _stay_matches_tier(item, tier) else 1, rating_first, _price_of(item))
+
+        return key
+
+    if domain == "cars":
+        car_class = preferences.get("car_class", "any")
+        if car_class not in CAR_CLASS_KEYWORDS:
+            return _price_of
+        return lambda item: (0 if _car_matches_class(item, car_class) else 1, _price_of(item))
+
+    return _price_of
+
+
+def rank_and_normalize(
+    research_results: dict,
+    preferred_departure_time: str = "any",
+    top_n: int = 5,
+    preferences: dict | None = None,
+) -> dict:
+    """Sort each domain's items by how well they fit the traveler, then trim to the
+    top N. Pure/deterministic.
+
+    Preferences are a soft priority, not a hard filter: options matching the
+    traveler's stated cabin/stops, departure time, hotel tier, or car class sort
+    first, so they're never cut off by cheaper non-matching options, but if nothing
+    matches, the traveler still sees the best alternatives instead of nothing. With
+    no preferences stated, this is plain cheapest-first.
     """
+    preferences = preferences or {}
     ranked = {}
     for domain, result in research_results.items():
         if result.get("status") != "ok":
             ranked[domain] = result
             continue
 
-        if domain == "flights" and preferred_departure_time in TIME_BANDS:
-            sort_key = lambda item: (  # noqa: E731
-                0 if _matches_preferred_time(item, preferred_departure_time) else 1,
-                _price_of(item),
-            )
-        else:
-            sort_key = _price_of
-
+        sort_key = _sort_key(domain, preferences, preferred_departure_time)
         sorted_items = sorted(result["items"], key=sort_key)
         ranked[domain] = {"status": "ok", "items": sorted_items[:top_n]}
     return ranked

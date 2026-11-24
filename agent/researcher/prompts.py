@@ -27,6 +27,13 @@ e.g. domains ["flights"] must never trigger a stays or cars call, and domains
 drawn from the request (origin, destination, dates, number of travelers, driver
 details for cars, etc.).
 
+The request's `preferences` carry the traveler's comfort choices. For flights,
+always pass cabin_class = preferences.flight_cabin, and pass max_connections =
+preferences.flight_max_stops whenever it isn't null. Hotel tier and car class
+preferences are applied after your search (results are re-ranked to put matching
+options first), so search normally for those, but mention in your summary if
+nothing matching the preference came back.
+
 search_stays and search_cars take latitude/longitude, not airport codes. Use the
 coordinates of the destination city/airport (e.g. HNL ≈ 21.32, -157.92), and a
 radius_km wide enough to cover the city (around 10-20 for stays).

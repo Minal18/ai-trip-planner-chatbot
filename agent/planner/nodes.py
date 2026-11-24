@@ -16,9 +16,12 @@ class ProposeItinerary(BaseModel):
     selected_car_id: Optional[str] = Field(
         default=None, description="rate_id of the chosen car from research_results['cars']['items'], or null if cars weren't searched."
     )
-    total_price: str = Field(description="Sum of the selected items' prices, as a string with currency, e.g. '$943.50'.")
     summary: str = Field(
-        description="Plain-language summary of the recommended itinerary and the trade-offs considered, to show the traveler."
+        description=(
+            "2-3 short sentences, max ~60 words: why these picks fit the traveler's preferences and the one "
+            "key trade-off, if any. Don't restate prices, times, flight legs, or dates (they're shown to the "
+            "traveler separately), and don't discuss date mismatches (flagged separately)."
+        )
     )
 
 
@@ -56,8 +59,8 @@ def validate_consistency(itinerary: dict, research_results: dict) -> list[str]:
 
     Two kinds of checks: every selected id must actually exist in the data (catches
     hallucination), and where both a flight and a stay were selected, their dates
-    must actually line up. Cars aren't date-checked here — the trimmed car item
-    shape doesn't carry dates at all (a known gap, see docs/pending-items.md).
+    must actually line up. Cars aren't date-checked against flights yet (see
+    docs/pending-items.md).
     """
     problems = []
 
@@ -87,3 +90,28 @@ def validate_consistency(itinerary: dict, research_results: dict) -> list[str]:
                 )
 
     return problems
+
+
+# Where each domain's selected id and whole-trip price live in research_results.
+_DOMAIN_FIELDS = {
+    "flights": ("selected_flight_id", "id", "total_amount", "total_currency"),
+    "stays": ("selected_stay_id", "search_result_id", "cheapest_rate_total_amount", "cheapest_rate_currency"),
+    "cars": ("selected_car_id", "rate_id", "total_amount", "total_currency"),
+}
+
+
+def compute_total(itinerary: dict, research_results: dict) -> str:
+    """Pure/deterministic: sum the selected items' whole-trip prices (taxes included),
+    per currency. Done in code, not by the LLM, so the total is always exactly the
+    sum of what's shown. Mixed currencies are listed side by side rather than
+    converted, e.g. "USD 1,022.21 + EUR 300.00"."""
+    totals: dict[str, float] = {}
+    for domain, (selection_key, id_field, amount_field, currency_field) in _DOMAIN_FIELDS.items():
+        item = _find_item(research_results, domain, id_field, itinerary.get(selection_key))
+        if item is None or item.get(amount_field) is None:
+            continue
+        currency = item.get(currency_field) or "USD"
+        totals[currency] = totals.get(currency, 0.0) + float(item[amount_field])
+    if not totals:
+        return "n/a"
+    return " + ".join(f"{cur} {amount:,.2f}" for cur, amount in totals.items())

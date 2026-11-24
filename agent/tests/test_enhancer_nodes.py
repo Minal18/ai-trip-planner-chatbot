@@ -79,3 +79,43 @@ def test_parse_response_raises_on_multiple_tool_calls():
     )
     with pytest.raises(ValueError):
         parse_response(response)
+
+
+def test_parse_response_request_ready_fills_default_preferences_when_none_given():
+    response = _ai_message_with_tool_call(
+        "RequestReady", {"summary": "...", "domains": ["flights"], "request": {"origin": "SFO"}}
+    )
+    prefs = parse_response(response)["request"]["preferences"]
+    assert prefs == {
+        "flight_cabin": "economy",
+        "flight_max_stops": None,
+        "stay_tier": "any",
+        "car_class": "any",
+        "budget_note": None,
+    }
+
+
+def test_parse_response_request_ready_keeps_mixed_per_domain_preferences():
+    response = _ai_message_with_tool_call(
+        "RequestReady",
+        {
+            "summary": "...",
+            "domains": ["flights", "stays", "cars"],
+            "request": {"origin": "SEA", "destination": "BOM"},
+            "preferences": {"flight_cabin": "business", "flight_max_stops": 1, "stay_tier": "luxury", "car_class": "economy"},
+        },
+    )
+    prefs = parse_response(response)["request"]["preferences"]
+    assert prefs["flight_cabin"] == "business"
+    assert prefs["flight_max_stops"] == 1
+    assert prefs["stay_tier"] == "luxury"
+    assert prefs["car_class"] == "economy"
+
+
+def test_parse_response_request_ready_rejects_unknown_preference_value():
+    response = _ai_message_with_tool_call(
+        "RequestReady",
+        {"summary": "...", "domains": ["flights"], "request": {}, "preferences": {"flight_cabin": "super_luxe"}},
+    )
+    with pytest.raises(ValueError):
+        parse_response(response)

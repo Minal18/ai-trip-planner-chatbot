@@ -30,12 +30,29 @@ async def _request(method: str, path: str, **kwargs) -> dict:
     return response.json()
 
 
-def _trim_offer(offer: dict) -> dict:
+CABIN_CLASSES = {"economy", "premium_economy", "business", "first"}
+
+
+def _trim_segment(seg: dict) -> dict:
+    carrier = seg.get("marketing_carrier") or {}
+    return {
+        "flight_number": f"{carrier.get('iata_code', '')}{seg.get('marketing_carrier_flight_number', '')}",
+        "carrier": carrier.get("name"),
+        "origin": seg["origin"]["iata_code"],
+        "destination": seg["destination"]["iata_code"],
+        "departing_at": seg["departing_at"],
+        "arriving_at": seg["arriving_at"],
+        "duration": seg.get("duration"),
+    }
+
+
+def _trim_offer(offer: dict, cabin_class: str = "economy") -> dict:
     return {
         "id": offer["id"],
         "total_amount": offer["total_amount"],
         "total_currency": offer["total_currency"],
         "airline": offer["owner"]["name"],
+        "cabin_class": cabin_class,
         "expires_at": offer.get("expires_at"),
         "slices": [
             {
@@ -44,6 +61,10 @@ def _trim_offer(offer: dict) -> dict:
                 "departing_at": s["segments"][0]["departing_at"],
                 "arriving_at": s["segments"][-1]["arriving_at"],
                 "duration": s.get("duration"),
+                # Every leg of the slice, so connections/layovers can be shown to
+                # the traveler (stops = segments - 1).
+                "stops": len(s["segments"]) - 1,
+                "segments": [_trim_segment(seg) for seg in s["segments"]],
             }
             for s in offer["slices"]
         ],
@@ -57,12 +78,18 @@ async def search_flights(
     departure_date: str,
     return_date: str | None = None,
     adults: int = 1,
+    cabin_class: str = "economy",
+    max_connections: int | None = None,
 ) -> dict:
     """Search flight offers between two IATA airport codes.
 
     origin/destination: 3-letter IATA airport codes (e.g. "LHR", "JFK").
     departure_date/return_date: ISO date strings ("YYYY-MM-DD"). Omit return_date for a one-way search.
+    cabin_class: "economy", "premium_economy", "business" or "first".
+    max_connections: maximum stops per slice (0 = nonstop only, 1 = up to one stop). Omit for no limit.
     """
+    if cabin_class not in CABIN_CLASSES:
+        return {"error": f"cabin_class must be one of {sorted(CABIN_CLASSES)}, got {cabin_class!r}"}
     slices = [{"origin": origin, "destination": destination, "departure_date": departure_date}]
     if return_date:
         slices.append({"origin": destination, "destination": origin, "departure_date": return_date})
@@ -71,16 +98,18 @@ async def search_flights(
         "data": {
             "slices": slices,
             "passengers": [{"type": "adult"} for _ in range(adults)],
-            "cabin_class": "economy",
+            "cabin_class": cabin_class,
         }
     }
+    if max_connections is not None:
+        payload["data"]["max_connections"] = max_connections
 
     result = await _request("POST", "/air/offer_requests?return_offers=true", json=payload)
     if "error" in result:
         return result
 
     offers = result["data"]["offers"][:10]
-    return {"offers": [_trim_offer(o) for o in offers]}
+    return {"offers": [_trim_offer(o, cabin_class) for o in offers]}
 
 
 @mcp.tool()

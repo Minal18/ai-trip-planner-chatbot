@@ -1,4 +1,5 @@
 import os
+from datetime import date
 
 import httpx
 from dotenv import load_dotenv
@@ -25,9 +26,19 @@ MOCK_MODE = os.environ.get("DUFFEL_MOCK_MODE", "false").lower() == "true"
 mcp = MCPServer("stays")
 
 
+MOCK_TAX_RATE = 0.12
+
+
+def _nights(check_in: str, check_out: str) -> int:
+    return max((date.fromisoformat(check_out) - date.fromisoformat(check_in)).days, 1)
+
+
 def _mock_stays_search_response(payload: dict) -> dict:
     check_in = payload["data"]["check_in_date"]
     check_out = payload["data"]["check_out_date"]
+    nights = _nights(check_in, check_out)
+    # Amounts below are NIGHTLY rates; the response carries whole-stay totals
+    # (nightly x nights, plus tax), matching how Duffel quotes a stay.
     listings = [
         ("Seaside Budget Inn", 3.6, "142 Shoreline Ave", "129.00"),
         ("Traveler's Rest Motel", 3.4, "27 Airport Rd", "99.00"),
@@ -48,7 +59,8 @@ def _mock_stays_search_response(payload: dict) -> dict:
                 {
                     "id": f"srez_mock_{i}",
                     "accommodation": {"name": name, "rating": rating, "location": {"address": address}},
-                    "cheapest_rate_total_amount": amount,
+                    "cheapest_rate_base_amount": f"{float(amount) * nights:.2f}",
+                    "cheapest_rate_total_amount": f"{float(amount) * nights * (1 + MOCK_TAX_RATE):.2f}",
                     "cheapest_rate_currency": "USD",
                     "check_in_date": check_in,
                     "check_out_date": check_out,
@@ -136,6 +148,9 @@ async def _request(method: str, path: str, **kwargs) -> dict:
 
 
 def _trim_search_result(result: dict) -> dict:
+    nights = _nights(result["check_in_date"], result["check_out_date"])
+    total = _to_float(result.get("cheapest_rate_total_amount"))
+    base = _to_float(result.get("cheapest_rate_base_amount"))
     return {
         "search_result_id": result["id"],
         "accommodation_name": result["accommodation"]["name"],
@@ -145,7 +160,23 @@ def _trim_search_result(result: dict) -> dict:
         "cheapest_rate_currency": result.get("cheapest_rate_currency"),
         "check_in_date": result["check_in_date"],
         "check_out_date": result["check_out_date"],
+        "nights": nights,
+        # Per-night price before tax when the base amount is known, otherwise the
+        # all-in total spread across the nights.
+        "nightly_rate": _money((base if base is not None else total) / nights) if total is not None else None,
+        "taxes_amount": _money(total - base) if total is not None and base is not None else None,
     }
+
+
+def _to_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _money(value: float) -> str:
+    return f"{value:.2f}"
 
 
 def _trim_rate(rate: dict, room_name: str) -> dict:

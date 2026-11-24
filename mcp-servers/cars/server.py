@@ -1,4 +1,6 @@
+import math
 import os
+from datetime import datetime
 
 import httpx
 from dotenv import load_dotenv
@@ -25,7 +27,21 @@ MOCK_MODE = os.environ.get("DUFFEL_MOCK_MODE", "false").lower() == "true"
 mcp = MCPServer("cars")
 
 
+MOCK_TAX_RATE = 0.15
+
+
+def _rental_days(pickup_date: str, pickup_time: str, dropoff_date: str, dropoff_time: str) -> int:
+    """Billable days the way rental companies count them: every started 24h block."""
+    start = datetime.fromisoformat(f"{pickup_date}T{pickup_time}")
+    end = datetime.fromisoformat(f"{dropoff_date}T{dropoff_time}")
+    return max(math.ceil((end - start).total_seconds() / 86400), 1)
+
+
 def _mock_cars_search_response(payload: dict) -> dict:
+    d = payload["data"]
+    days = _rental_days(d["pickup_date"], d["pickup_time"], d["dropoff_date"], d["dropoff_time"])
+    # Amounts below are DAILY rates; the response carries whole-rental totals
+    # (daily x days, plus tax).
     pickup_address = f"Near {payload['data']['pickup_location']['geographic_coordinates']}"
     dropoff_address = f"Near {payload['data']['dropoff_location']['geographic_coordinates']}"
     vehicles = [
@@ -49,7 +65,8 @@ def _mock_cars_search_response(payload: dict) -> dict:
                     "id": f"rat_mock_{i}",
                     "vehicle": {"name": name},
                     "vendor": {"name": vendor},
-                    "total_amount": amount,
+                    "base_amount": f"{float(amount) * days:.2f}",
+                    "total_amount": f"{float(amount) * days * (1 + MOCK_TAX_RATE):.2f}",
                     "total_currency": "USD",
                     "pickup_location": {"address": pickup_address},
                     "dropoff_location": {"address": dropoff_address},
@@ -100,7 +117,9 @@ async def _request(method: str, path: str, **kwargs) -> dict:
     return response.json()
 
 
-def _trim_rate(rate: dict) -> dict:
+def _trim_rate(rate: dict, pickup_date: str, dropoff_date: str, days: int) -> dict:
+    total = _to_float(rate.get("total_amount"))
+    base = _to_float(rate.get("base_amount"))
     return {
         "rate_id": rate["id"],
         "vehicle": rate.get("vehicle", {}).get("name"),
@@ -109,7 +128,21 @@ def _trim_rate(rate: dict) -> dict:
         "total_currency": rate.get("total_currency"),
         "pickup_location": rate.get("pickup_location", {}).get("address"),
         "dropoff_location": rate.get("dropoff_location", {}).get("address"),
+        "pickup_date": pickup_date,
+        "dropoff_date": dropoff_date,
+        "rental_days": days,
+        # Per-day price before tax when the base amount is known, otherwise the
+        # all-in total spread across the days.
+        "daily_rate": f"{(base if base is not None else total) / days:.2f}" if total is not None else None,
+        "taxes_amount": f"{total - base:.2f}" if total is not None and base is not None else None,
     }
+
+
+def _to_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 @mcp.tool()
@@ -154,7 +187,8 @@ async def search_cars(
         return result
 
     rates = result["data"].get("rates", result["data"].get("results", []))[:10]
-    return {"rates": [_trim_rate(r) for r in rates]}
+    days = _rental_days(pickup_date, pickup_time, dropoff_date, dropoff_time)
+    return {"rates": [_trim_rate(r, pickup_date, dropoff_date, days) for r in rates]}
 
 
 @mcp.tool()

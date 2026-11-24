@@ -88,3 +88,26 @@ def test_validate_consistency_skips_date_check_for_one_way():
     # Only the outbound-arrival vs check-in comparison applies for one-way — and
     # those do align here — so no problems even though check_out_date is unrelated.
     assert validate_consistency(itinerary, research_results) == []
+
+
+def _results_for_total():
+    return {
+        "flights": {"status": "ok", "items": [{"id": "off_1", "total_amount": "890.71", "total_currency": "USD"}]},
+        "stays": {"status": "ok", "items": [{"search_result_id": "srez_1", "cheapest_rate_total_amount": "577.92", "cheapest_rate_currency": "USD"}]},
+        "cars": {"status": "ok", "items": [{"rate_id": "rat_1", "total_amount": "149.50", "total_currency": "EUR"}]},
+    }
+
+
+def test_compute_total_sums_selected_items_per_currency():
+    from planner.nodes import compute_total
+
+    itinerary = {"selected_flight_id": "off_1", "selected_stay_id": "srez_1", "selected_car_id": "rat_1"}
+    assert compute_total(itinerary, _results_for_total()) == "USD 1,468.63 + EUR 149.50"
+
+
+def test_compute_total_ignores_unselected_and_unknown_ids():
+    from planner.nodes import compute_total
+
+    itinerary = {"selected_flight_id": "off_1", "selected_stay_id": "does_not_exist", "selected_car_id": None}
+    assert compute_total(itinerary, _results_for_total()) == "USD 890.71"
+    assert compute_total({}, _results_for_total()) == "n/a"

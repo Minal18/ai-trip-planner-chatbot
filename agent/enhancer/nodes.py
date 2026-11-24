@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,27 @@ class AskQuestion(BaseModel):
     """Ask the traveler one clarifying question."""
 
     question: str = Field(description="A single, natural, conversational question.")
+
+
+class Preferences(BaseModel):
+    """Comfort/budget preferences, per domain. Every default means "no preference
+    stated: go for best value", which is not the same as "cheapest at any cost"."""
+
+    flight_cabin: Literal["economy", "premium_economy", "business", "first"] = Field(
+        default="economy", description="Cabin class for flights."
+    )
+    flight_max_stops: Optional[int] = Field(
+        default=None, description="Maximum stops per direction (0 = nonstop, 1 = up to one stop). null = no limit."
+    )
+    stay_tier: Literal["any", "budget", "midrange", "luxury"] = Field(
+        default="any", description="Hotel comfort level. \"any\" = best value."
+    )
+    car_class: Literal["any", "economy", "compact", "midsize", "fullsize", "suv", "minivan", "premium"] = Field(
+        default="any", description="Rental car size/class. \"premium\" covers luxury and convertibles. \"any\" = best value."
+    )
+    budget_note: Optional[str] = Field(
+        default=None, description="Any overall budget the traveler stated, in their words (e.g. \"around $4,000 total\")."
+    )
 
 
 class RequestReady(BaseModel):
@@ -33,6 +54,10 @@ class RequestReady(BaseModel):
             "pickup_location, pickup_date, dropoff_date, pickup_time, dropoff_time, "
             "driver_age, driver_residence_country_code (if a car is needed)."
         )
+    )
+    preferences: Preferences = Field(
+        default_factory=Preferences,
+        description="The traveler's comfort/budget preferences for the chosen services. Leave a field at its default if they didn't state one.",
     )
 
 
@@ -64,7 +89,13 @@ def parse_response(response) -> dict:
         # Supervisor's edit path, which rewrites the whole request dict.
         return {
             "complete": True,
-            "request": {**call["args"]["request"], "domains": domains},
+            "request": {
+                **call["args"]["request"],
+                "domains": domains,
+                # Validated here (fills defaults, rejects unknown values) so every
+                # downstream agent can rely on the full preferences shape.
+                "preferences": Preferences.model_validate(call["args"].get("preferences") or {}).model_dump(),
+            },
             "summary": call["args"]["summary"],
             "pending_question": None,
         }

@@ -22,7 +22,11 @@ from langgraph.types import Command
 
 from supervisor.graph import build_supervisor_graph
 
-load_dotenv()
+# python-dotenv's default load_dotenv() only searches upward from the current
+# working directory — since chatui/ is a sibling of agent/, not a parent, it
+# would never find agent/.env. Point at it explicitly (same reasoning as the
+# sys.path.insert above: this app borrows agent/'s whole environment).
+load_dotenv(Path(__file__).resolve().parent.parent / "agent" / ".env")
 
 _graph = None  # built once, lazily; the compiled graph itself is stateless and
 # safe to share across chat sessions — only thread_id (per-session) makes each
