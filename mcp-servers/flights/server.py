@@ -54,6 +54,7 @@ def _trim_offer(offer: dict, cabin_class: str = "economy") -> dict:
         "airline": offer["owner"]["name"],
         "cabin_class": cabin_class,
         "expires_at": offer.get("expires_at"),
+        "passenger_count": len(offer.get("passengers") or []),
         "slices": [
             {
                 "origin": s["origin"]["iata_code"],
@@ -121,45 +122,46 @@ async def get_offer(offer_id: str) -> dict:
     return _trim_offer(result["data"])
 
 
+PASSENGER_FIELDS = ("given_name", "family_name", "email", "born_on", "gender", "title", "phone_number")
+
+
 @mcp.tool()
-async def book_flight(
-    offer_id: str,
-    passenger_given_name: str,
-    passenger_family_name: str,
-    passenger_email: str,
-    passenger_born_on: str,
-    passenger_gender: str,
-    passenger_title: str,
-    passenger_phone_number: str,
-) -> dict:
+async def book_flight(offer_id: str, passengers: list[dict]) -> dict:
     """Book a flight offer, creating an order. Test mode only — no real charge or ticket is issued.
 
-    passenger_born_on: ISO date string ("YYYY-MM-DD").
-    passenger_gender: "m" or "f" (per Duffel's passenger schema).
-    passenger_title: e.g. "mr", "mrs", "ms".
-    passenger_phone_number: E.164 format (e.g. "+14155550123").
+    passengers: one entry per traveler on the offer (the offer was searched for a
+    fixed number of adults, and Duffel rejects an order whose passenger count
+    differs). Each entry needs:
+      given_name, family_name, email,
+      born_on: ISO date string ("YYYY-MM-DD"),
+      gender: "m" or "f" (per Duffel's passenger schema),
+      title: e.g. "mr", "mrs", "ms",
+      phone_number: E.164 format (e.g. "+14155550123").
+    The same email/phone may be repeated across passengers.
     """
-    # Duffel requires the order's passenger `id` to match the id Duffel assigned
-    # when the offer was created — fetch it rather than inventing one.
+    for i, p in enumerate(passengers):
+        missing = [f for f in PASSENGER_FIELDS if not p.get(f)]
+        if missing:
+            return {"error": f"passenger {i + 1} is missing required field(s): {missing}"}
+
+    # Duffel requires each order passenger `id` to match an id Duffel assigned
+    # when the offer was created — fetch them rather than inventing any.
     offer_result = await _request("GET", f"/air/offers/{offer_id}")
     if "error" in offer_result:
         return offer_result
-    duffel_passenger_id = offer_result["data"]["passengers"][0]["id"]
+    offer_passengers = offer_result["data"]["passengers"]
+    if len(passengers) != len(offer_passengers):
+        return {
+            "error": f"This offer is for {len(offer_passengers)} passenger(s) but details for "
+            f"{len(passengers)} were provided — one set of details is needed per traveler."
+        }
 
     payload = {
         "data": {
             "selected_offers": [offer_id],
             "passengers": [
-                {
-                    "id": duffel_passenger_id,
-                    "given_name": passenger_given_name,
-                    "family_name": passenger_family_name,
-                    "email": passenger_email,
-                    "born_on": passenger_born_on,
-                    "gender": passenger_gender,
-                    "title": passenger_title,
-                    "phone_number": passenger_phone_number,
-                }
+                {"id": offer_p["id"], **{f: p[f] for f in PASSENGER_FIELDS}}
+                for offer_p, p in zip(offer_passengers, passengers)
             ],
             "payments": [
                 {

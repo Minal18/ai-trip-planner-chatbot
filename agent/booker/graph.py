@@ -10,10 +10,13 @@ from booker.mcp_tools import load_booker_tools
 from booker.nodes import (
     PassengerDetails,
     booking_id_of,
+    expected_traveler_count,
+    flight_passengers,
     get_selected_items,
     parse_passenger_details,
     parse_tool_output,
     reference_of,
+    traveler_count_problem,
 )
 from booker.prompts import PASSENGER_EXTRACTION_PROMPT
 
@@ -21,6 +24,7 @@ from booker.prompts import PASSENGER_EXTRACTION_PROMPT
 class BookerState(TypedDict):
     itinerary: dict
     research_results: dict
+    request: Optional[dict]
     passenger: Optional[dict]
     resolved_stay_rate_id: Optional[str]
     booking_results: Optional[dict]
@@ -35,16 +39,36 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
     passenger_model = ChatAnthropic(model="claude-sonnet-5").bind_tools([PassengerDetails], tool_choice="any")
 
     async def collect_passenger_details(state: BookerState) -> dict:
-        reply = interrupt(
-            {
-                "question": "To book this, I need your full legal name, email, phone number, "
+        selected_flight = get_selected_items(state["itinerary"], state["research_results"])["flight"]
+        expected = expected_traveler_count(state.get("request"), selected_flight)
+        if expected == 1:
+            question = (
+                "To book this, I need your full legal name, email, phone number, "
                 "date of birth, title (Mr/Ms/Mrs/Miss/Dr), and gender."
-            }
-        )
-        response = await passenger_model.ainvoke(
-            [SystemMessage(content=PASSENGER_EXTRACTION_PROMPT), HumanMessage(content=reply)]
-        )
-        return {"passenger": parse_passenger_details(response)}
+            )
+        else:
+            question = (
+                f"To book this for {expected} travelers, I need each traveler's full legal name, "
+                "date of birth, title (Mr/Ms/Mrs/Miss/Dr), and gender, plus one contact email "
+                "and phone number for the booking."
+            )
+
+        # Re-ask until the count matches — the flight offer was priced for a fixed
+        # number of passengers and Duffel rejects an order that doesn't match it.
+        # (Each loop's interrupt is replayed from its saved resume value on re-run.)
+        while True:
+            reply = interrupt({"question": question})
+            response = await passenger_model.ainvoke(
+                [
+                    SystemMessage(content=PASSENGER_EXTRACTION_PROMPT),
+                    HumanMessage(content=f"Expected number of travelers: {expected}\n\n{reply}"),
+                ]
+            )
+            details = parse_passenger_details(response)
+            problem = traveler_count_problem(details, expected)
+            if problem is None:
+                return {"passenger": details}
+            question = problem
 
     async def resolve_stay_rate(state: BookerState) -> dict:
         # Not a reprice check — itinerary only recorded a search_result_id (an
@@ -67,7 +91,10 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
 
     async def book(state: BookerState) -> dict:
         itinerary = state["itinerary"]
-        p = state["passenger"]
+        details = state["passenger"]
+        # Stays and cars are booked under the lead traveler (one guest name /
+        # one driver), with the booking's shared contact details.
+        p = {**details["travelers"][0], "email": details["email"], "phone_number": details["phone_number"]}
         results = {}
 
         if itinerary.get("selected_flight_id"):
@@ -75,13 +102,7 @@ async def build_booker_graph(use_own_checkpointer: bool = True):
                 await tools["book_flight"].ainvoke(
                     {
                         "offer_id": itinerary["selected_flight_id"],
-                        "passenger_given_name": p["given_name"],
-                        "passenger_family_name": p["family_name"],
-                        "passenger_email": p["email"],
-                        "passenger_born_on": p["date_of_birth"],
-                        "passenger_gender": p["gender"],
-                        "passenger_title": p["title"],
-                        "passenger_phone_number": p["phone_number"],
+                        "passengers": flight_passengers(details),
                     }
                 )
             )

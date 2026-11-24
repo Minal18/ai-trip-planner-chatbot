@@ -17,7 +17,7 @@ cp .env.example .env   # then fill in your Duffel test token
 
 ## Booking a flight
 
-`book_flight` needs the full passenger set Duffel requires for order creation: `given_name`, `family_name`, `email`, `born_on` (`YYYY-MM-DD`), `gender` (`m`/`f`), `title` (`mr`/`mrs`/`ms`), `phone_number` (E.164, e.g. `+14155550123`). Payment is automatic — the tool pays with the offer's exact amount via the `balance` payment type against your Duffel test-mode balance.
+`book_flight` takes the `offer_id` and a `passengers` list with **one entry per traveler on the offer**. The offer was searched for a fixed number of `adults`, and the tool returns an error if the counts differ (Duffel rejects such an order). Each entry needs the fields Duffel requires for order creation: `given_name`, `family_name`, `email`, `born_on` (`YYYY-MM-DD`), `gender` (`m`/`f`), `title` (`mr`/`mrs`/`ms`), `phone_number` (E.164, e.g. `+14155550123`). The same email and phone can be repeated across passengers. Search and offer results include `passenger_count`. Payment is automatic: the tool pays with the offer's exact amount via the `balance` payment type against your Duffel test-mode balance.
 
 ## Run standalone (MCP Inspector)
 

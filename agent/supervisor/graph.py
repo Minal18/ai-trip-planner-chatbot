@@ -89,7 +89,11 @@ async def build_supervisor_graph():
 
     async def run_booker(state: SupervisorState) -> dict:
         result = await booker_graph.ainvoke(
-            {"itinerary": state["itinerary"], "research_results": state["research_results"]}
+            {
+                "itinerary": state["itinerary"],
+                "research_results": state["research_results"],
+                "request": state["request"],
+            }
         )
         return {"booking_result": result}
 
