@@ -20,8 +20,9 @@ async def run_case(graph, label: str, request: dict):
     print(f"\n{'=' * 60}\n{label}\n{'=' * 60}")
     result = await graph.ainvoke({"request": request})
 
-    print("\n--- Final message ---")
-    print(result["messages"][-1].content)
+    print("\n--- Tool calls requested ---")
+    for call in result["messages"][1].tool_calls:
+        print(call["name"], json.dumps(call["args"]))
 
     print("\n--- research_results ---")
     print(json.dumps(result["research_results"], indent=2))
