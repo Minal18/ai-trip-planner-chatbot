@@ -147,3 +147,29 @@ def parse_retry_decision(response, state: dict) -> dict:
         "confirmed_bookings": confirmed,
         "passenger": state["booking_result"].get("passenger"),
     }
+
+
+# Every per-trip slot in SupervisorState (everything except `messages`).
+TRIP_SLOTS = (
+    "request",
+    "summary",
+    "research_results",
+    "insufficient_domains",
+    "itinerary",
+    "itinerary_status",
+    "edit_feedback",
+    "booking_result",
+    "confirmed_bookings",
+    "passenger",
+    "retry_declined",
+)
+
+
+def trip_reset() -> dict:
+    """Pure: the state update that ends a finished trip (booked, retry declined,
+    or rejected) and starts the next one. Every per-trip slot goes back to None,
+    so the next message routes to the Enhancer — without this, all slots stay
+    filled and decide_next_step keeps answering "done", replaying the old outcome.
+    (The conversation itself is cleared separately, in announce_outcome.)"""
+    return {slot: None for slot in TRIP_SLOTS}
+

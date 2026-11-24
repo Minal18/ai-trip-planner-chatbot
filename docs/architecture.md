@@ -360,6 +360,12 @@ can only fail again). Two things deliberately survive the reset:
 `confirmed_bookings` (Booker skips those domains, so nothing is booked twice) and
 `passenger` (the travelers aren't asked for their details again).
 
+**Finishing a trip.** Once a trip ends (booked, retry declined, or rejected),
+`announce_outcome` posts the outcome with "Would you like to plan another
+trip?", resets every per-trip slot to None (`trip_reset`), and clears the old
+conversation (`RemoveMessage(REMOVE_ALL_MESSAGES)`), so the next message starts
+fresh at the Enhancer instead of the router answering "done" forever.
+
 ## 8. MVP definition of done
 
 - Supervisor correctly routes between Enhancer → Researcher → Planner → Human-in-the-

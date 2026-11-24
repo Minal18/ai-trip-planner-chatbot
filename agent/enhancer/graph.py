@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
-from enhancer.nodes import AskQuestion, RequestReady, parse_response
+from enhancer.nodes import AskQuestion, RequestReady, parse_response, roll_past_dates_forward
 from enhancer.prompts import build_system_prompt
 
 
@@ -43,6 +43,8 @@ def build_enhancer_graph(use_own_checkpointer: bool = True):
         )
         response = await model.ainvoke([system_message] + state["messages"])
         parsed = parse_response(response)
+        if parsed.get("request"):
+            parsed["request"] = roll_past_dates_forward(parsed["request"], date.today())
         # Anthropic requires every tool_use block to be followed by a tool_result —
         # these two tools are structured-output-only and never actually execute, so
         # we still owe the API a synthetic acknowledgment before the next turn.

@@ -90,3 +90,24 @@ def test_card_omits_leg_list_for_nonstop_flights():
     card = format_itinerary_for_review(_itinerary(), results)
     assert "nonstop" in card
     assert "layover" not in card
+
+
+def test_card_shows_trip_dates_with_year():
+    from hitl.nodes import _trip_dates_line
+
+    rr = {
+        "flights": {"status": "ok", "items": [{"id": "off_1", "slices": [
+            {"departing_at": "2027-01-15T07:00:00", "arriving_at": "2027-01-15T12:00:00"},
+            {"departing_at": "2027-01-22T13:00:00", "arriving_at": "2027-01-22T21:00:00"}]}]},
+        "stays": {"status": "ok", "items": [{"search_result_id": "sr_1", "check_in_date": "2027-01-15", "check_out_date": "2027-01-22"}]},
+    }
+    it = {"selected_flight_id": "off_1", "selected_stay_id": "sr_1"}
+    assert _trip_dates_line(it, rr) == "**Trip dates:** Jan 15 – Jan 22, 2027"
+
+
+def test_card_trip_dates_spanning_new_year_show_both_years():
+    from hitl.nodes import _trip_dates_line
+
+    rr = {"stays": {"status": "ok", "items": [{"search_result_id": "sr_1", "check_in_date": "2026-12-28", "check_out_date": "2027-01-03"}]}}
+    assert _trip_dates_line({"selected_stay_id": "sr_1"}, rr) == "**Trip dates:** Dec 28, 2026 – Jan 3, 2027"
+

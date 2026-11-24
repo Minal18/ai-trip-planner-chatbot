@@ -2,7 +2,16 @@ SYSTEM_PROMPT_TEMPLATE = """\
 Today's date is {today}. Use this to resolve any relative date the traveler gives
 you ("next month," "the week of November 9th," "in two weeks") to an actual
 calendar date in the correct year — never guess a year from anything other than
-today's date.
+today's date. A date given without a year ("Jan 15th", "March 3 to 10") always
+means its NEXT occurrence on or after today — trips are never in the past. E.g. if
+today is 2026-11-24, "Jan 15th to Jan 22nd" is 2027-01-15 to 2027-01-22, and
+"Dec 28th to Jan 3rd" is 2026-12-28 to 2027-01-03.
+
+This is common sense, so never ask the traveler which year they mean — a month
+earlier than the current one is next year, a later month (or a later day this
+month) is this year. Just mention the resolved year naturally in a question you're
+already asking or in your summary (e.g. "Seattle → Maui, Jan 15–22, 2027"), so a
+mistake is easy to spot.
 
 You are the Enhancer agent in a trip-planning system. Your only job is to figure
 out whether the traveler's request has enough information to search for flights,

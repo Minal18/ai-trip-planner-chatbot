@@ -1,16 +1,18 @@
 import json
+from datetime import date
 from typing import Annotated, Optional, TypedDict
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
+from langgraph.graph.message import REMOVE_ALL_MESSAGES, add_messages
 from langgraph.types import interrupt
 
 from booker.graph import build_booker_graph
 from booker.nodes import DOMAIN_LABELS, failed_domains, format_booking_lines
 from enhancer.graph import build_enhancer_graph
+from enhancer.nodes import roll_past_dates_forward
 from hitl.nodes import Approve, RequestEdits, Reject, format_itinerary_for_review, parse_response as parse_hitl_response
 from hitl.prompts import SYSTEM_PROMPT as HITL_SYSTEM_PROMPT
 from planner.graph import build_planner_graph
@@ -25,6 +27,7 @@ from supervisor.nodes import (
     decide_next_step,
     parse_edit_classification,
     parse_retry_decision,
+    trip_reset,
 )
 from supervisor.prompts import EDIT_CLASSIFICATION_PROMPT, RETRY_DECISION_PROMPT
 
@@ -102,7 +105,11 @@ async def build_supervisor_graph():
         response = await edit_classifier_model.ainvoke(
             [SystemMessage(content=EDIT_CLASSIFICATION_PROMPT), HumanMessage(content=json.dumps(payload))]
         )
-        return parse_edit_classification(response)
+        update = parse_edit_classification(response)
+        if update.get("request"):
+            # Same wrong-year backstop as the Enhancer: the edit path rewrites the request.
+            update["request"] = roll_past_dates_forward(update["request"], date.today())
+        return update
 
     async def run_booker(state: SupervisorState) -> dict:
         result = await booker_graph.ainvoke(
@@ -142,10 +149,19 @@ async def build_supervisor_graph():
 
     def announce_outcome(state: SupervisorState) -> dict:
         if state["itinerary_status"] == "rejected":
-            text = "No problem — let me know if you'd like to start planning a different trip."
+            text = "No problem — I won't book that one.\n\nWould you like to plan a different trip?"
         else:  # approved and booked (or attempted, and the traveler chose not to retry)
-            text = "\n".join(_all_booking_lines(state)) or "Nothing was booked."
-        return {"messages": [AIMessage(content=text)]}
+            text = (
+                "\n".join(_all_booking_lines(state)) or "Nothing was booked."
+            ) + "\n\nYou're all set! Would you like to plan another trip?"
+        # The trip is finished: reset every trip slot so the next message starts
+        # fresh at the Enhancer, and clear the old conversation so the Enhancer
+        # doesn't mix the previous trip's details into the new one. The outcome
+        # message above stays as the first message of the new conversation.
+        return {
+            **trip_reset(),
+            "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), AIMessage(content=text)],
+        }
 
     graph = StateGraph(SupervisorState)
     graph.add_node("enhancer", run_enhancer)

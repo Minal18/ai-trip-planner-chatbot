@@ -1,7 +1,14 @@
 import pytest
 from langchain_core.messages import AIMessage
 
-from supervisor.nodes import confirmed_bookings, decide_next_step, parse_edit_classification, parse_retry_decision
+from supervisor.nodes import (
+    TRIP_SLOTS,
+    confirmed_bookings,
+    decide_next_step,
+    parse_edit_classification,
+    parse_retry_decision,
+    trip_reset,
+)
 
 
 def test_routes_to_enhancer_when_no_request_yet():
@@ -176,3 +183,17 @@ def test_confirmed_bookings_merges_earlier_and_latest_successes():
         "booking_result": {"booking_results": {"flight": {"order_id": "ord_2"}, "car": {"error": "x"}}},
     }
     assert set(confirmed_bookings(state)) == {"stay", "flight"}
+
+
+def test_trip_reset_clears_every_slot_and_routes_to_enhancer():
+    finished = {**FLIGHT_FAILED_STAY_OK, "retry_declined": True, "confirmed_bookings": {"stay": {}}}
+    assert decide_next_step(finished) == "done"
+    after = {**finished, **trip_reset()}
+    assert all(after[slot] is None for slot in TRIP_SLOTS)
+    assert decide_next_step(after) == "enhancer"
+
+
+def test_trip_slots_cover_every_supervisor_state_field_except_messages():
+    from supervisor.graph import SupervisorState
+
+    assert set(TRIP_SLOTS) == set(SupervisorState.__annotations__) - {"messages"}

@@ -1,3 +1,5 @@
+import re
+from datetime import date
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -106,3 +108,42 @@ def parse_response(response) -> dict:
         }
     else:
         raise ValueError(f"Unexpected tool call from Enhancer: {call['name']}")
+
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _next_occurrence(d: date, today: date) -> date:
+    while d < today:
+        try:
+            d = d.replace(year=d.year + 1)
+        except ValueError:  # 29 Feb -> a non-leap year
+            d = d.replace(year=d.year + 1, day=28)
+    return d
+
+
+def roll_past_dates_forward(value, today: date):
+    """Pure/deterministic backstop for a wrong year: move any trip date field (a
+    key containing "date" — but never a birth date — ISO YYYY-MM-DD) that's before
+    today to its next occurrence.
+
+    A trip date in the past is never what the traveler meant — it's the model
+    filling in the current year for "Jan 15th" when it's already November, which
+    the provider then rejects ("departure_date must be after <today>"). Each date
+    rolls independently, so a mis-yeared return ("Dec 28 – Jan 3") lands in the
+    following year, after the departure. Walks nested dicts/lists.
+    """
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            key = k.lower()
+            is_trip_date = "date" in key and "birth" not in key and "born" not in key
+            if isinstance(v, str) and is_trip_date and _ISO_DATE.match(v):
+                out[k] = _next_occurrence(date.fromisoformat(v), today).isoformat()
+            else:
+                out[k] = roll_past_dates_forward(v, today)
+        return out
+    if isinstance(value, list):
+        return [roll_past_dates_forward(v, today) for v in value]
+    return value
+

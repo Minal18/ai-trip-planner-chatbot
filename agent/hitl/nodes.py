@@ -136,6 +136,31 @@ def _car_lines(car: dict) -> list[str]:
     return [f"**Rental car** · {car.get('vehicle')}, {car.get('vendor')}", f"- {dates}{price}"]
 
 
+def _trip_dates_line(itinerary: dict, research_results: dict) -> str | None:
+    """'**Trip dates:** Jan 15 – Jan 22, 2027' — the per-item lines omit the year to
+    stay compact, so the year is shown once here (both years if the trip spans
+    New Year), letting the traveler catch a wrong year before approving."""
+    flight = _find(research_results, "flights", "id", itinerary.get("selected_flight_id"))
+    stay = _find(research_results, "stays", "search_result_id", itinerary.get("selected_stay_id"))
+    car = _find(research_results, "cars", "rate_id", itinerary.get("selected_car_id"))
+    starts, ends = [], []
+    if flight and flight.get("slices"):
+        starts.append(flight["slices"][0]["departing_at"][:10])
+        ends.append(flight["slices"][-1]["arriving_at"][:10])
+    if stay:
+        starts.append(stay["check_in_date"])
+        ends.append(stay["check_out_date"])
+    if car and car.get("pickup_date") and car.get("dropoff_date"):
+        starts.append(car["pickup_date"])
+        ends.append(car["dropoff_date"])
+    if not starts:
+        return None
+    start, end = date.fromisoformat(min(starts)[:10]), date.fromisoformat(max(ends)[:10])
+    if start.year == end.year:
+        return f"**Trip dates:** {start:%b} {start.day} – {end:%b} {end.day}, {end.year}"
+    return f"**Trip dates:** {start:%b} {start.day}, {start.year} – {end:%b} {end.day}, {end.year}"
+
+
 _CARD_DOMAINS = (
     ("flights", "selected_flight_id", "id", _flight_lines, "Flight"),
     ("stays", "selected_stay_id", "search_result_id", _stay_lines, "Hotel"),
@@ -146,6 +171,9 @@ _CARD_DOMAINS = (
 def format_itinerary_for_review(itinerary: dict, research_results: dict) -> str:
     """Pure/deterministic: the compact markdown card shown to the traveler for approval."""
     blocks = []
+    trip_dates = _trip_dates_line(itinerary, research_results)
+    if trip_dates:
+        blocks.append(trip_dates)
     for domain, selection_key, id_field, render, label in _CARD_DOMAINS:
         if domain not in research_results:
             continue  # not requested
